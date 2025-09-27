@@ -139,35 +139,78 @@ function App() {
               {latestMetrics.avg_power_w ? `${latestMetrics.avg_power_w}W` : '--'}
             </div>
           </div>
+
+          <div className="metric-card">
+            <div className="metric-label">Instant Power</div>
+            <div className="metric-value">
+              {latestMetrics.instantaneous_power_w ? `${latestMetrics.instantaneous_power_w}W` : '--'}
+            </div>
+          </div>
+
+          <div className="metric-card">
+            <div className="metric-label">Peak Power</div>
+            <div className="metric-value">
+              {latestMetrics.peak_power_w ? `${latestMetrics.peak_power_w}W` : '--'}
+            </div>
+          </div>
+
+          <div className="metric-card">
+            <div className="metric-label">Stroke Count</div>
+            <div className="metric-value">
+              {latestMetrics.stroke_count || '--'}
+            </div>
+          </div>
         </div>
 
         <div className="charts-container">
           <div className="chart-card">
-            <h3>Power Over Time</h3>
+            <h3>Power Curves</h3>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={rowingData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-                <XAxis 
-                  dataKey="elapsed_s" 
+                <XAxis
+                  dataKey="elapsed_s"
                   stroke="#888"
                   tickFormatter={(value) => formatDuration(value)}
                 />
                 <YAxis stroke="#888" />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#2a2a2a', 
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#2a2a2a',
                     border: '1px solid #444',
                     color: '#fff'
                   }}
-                  formatter={(value) => [`${value}W`, 'Power']}
+                  formatter={(value, name) => {
+                    if (name === 'instantaneous_power_w') return [`${value}W`, 'Instant Power'];
+                    if (name === 'avg_power_w') return [`${value}W`, 'Average Power'];
+                    if (name === 'peak_power_w') return [`${value}W`, 'Peak Power'];
+                    return [value, name];
+                  }}
                   labelFormatter={(value) => `Time: ${formatDuration(value)}`}
                 />
-                <Line 
-                  type="monotone" 
-                  dataKey="avg_power_w" 
-                  stroke="#00ff88" 
+                <Line
+                  type="monotone"
+                  dataKey="instantaneous_power_w"
+                  stroke="#ff6b6b"
+                  strokeWidth={1}
+                  dot={false}
+                  name="instantaneous_power_w"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="avg_power_w"
+                  stroke="#00ff88"
                   strokeWidth={2}
                   dot={false}
+                  name="avg_power_w"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="peak_power_w"
+                  stroke="#4ecdc4"
+                  strokeWidth={1}
+                  dot={false}
+                  name="peak_power_w"
                 />
               </LineChart>
             </ResponsiveContainer>
