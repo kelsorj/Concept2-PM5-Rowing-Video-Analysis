@@ -106,7 +106,10 @@ def parse_extra1(b: bytes):
         out["stroke_state"] = STROKE_STATE.get(b[6], b[6])
     
     if len(b) >= 9:
-        out["instantaneous_power_w"] = u16le(b, 7)
+        power_val = u16le(b, 7)
+        # Sanity check: rowing power shouldn't exceed 1000W
+        if power_val <= 1000:
+            out["instantaneous_power_w"] = power_val
     
     if len(b) >= 11:
         out["stroke_distance_m"] = u16le(b, 9) / 100.0
@@ -123,7 +126,10 @@ def parse_extra1(b: bytes):
     
     # Peak power in stroke
     if len(b) >= 19:
-        out["peak_power_w"] = u16le(b, 17)
+        peak_power_val = u16le(b, 17)
+        # Sanity check: rowing power shouldn't exceed 1000W
+        if peak_power_val <= 1000:
+            out["peak_power_w"] = peak_power_val
     
     return out
 

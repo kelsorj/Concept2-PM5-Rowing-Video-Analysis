@@ -17,7 +17,13 @@ A real-time rowing data visualization dashboard that displays Concept2 PM5 rowin
 ### 1. Install Dependencies
 
 ```bash
+# Install Node.js dependencies
 npm install
+
+# Install Python dependencies in virtual environment
+python3 -m venv rowing_env
+source rowing_env/bin/activate  # On Windows: rowing_env\Scripts\activate
+pip install bleak
 ```
 
 ### 2. Start the Data Server
@@ -82,14 +88,43 @@ The original BLE script only captured **average power** which updates slowly. Po
 
 ### Enhanced Solution
 The integrated system captures:
-- **Instantaneous Power**: Real-time power during each stroke phase
-- **Peak Power**: Maximum power achieved in each stroke
-- **Average Power**: Traditional workout average
-- **Stroke-by-stroke Data**: Detailed metrics for each rowing stroke
+- **Basic Metrics**: Time, distance, stroke rate, pace, heart rate ✅
+- **Average Power**: Traditional workout average power ✅
+- **Instantaneous Power**: Real-time power curves (PM5 firmware dependent) ⚠️
+- **Peak Power**: Maximum power per stroke (PM5 firmware dependent) ⚠️
 
 ### Data Sources
-- **Characteristics 0x0031-0x0033**: Basic rowing metrics (speed, distance, heart rate, etc.)
-- **Characteristics 0x0035-0x0036**: Detailed power curve and stroke data
+- **Characteristics 0x0031-0x0033**: Basic rowing metrics (speed, distance, heart rate, etc.) ✅
+- **Characteristics 0x0035-0x0036**: Detailed power curve data (not supported by all PM5 models) ⚠️
+
+### ⚠️ **Power Data Limitations**
+
+**Important**: Not all Concept2 PM5 models/firmware versions support power curve data via BLE. If you see "N/A" for instantaneous and peak power, your PM5 doesn't provide this data through Bluetooth.
+
+**Symptoms of missing power data:**
+- Instantaneous Power: N/A
+- Peak Power: N/A
+- Average Power: May be 0 or low values
+- No data from characteristics 0035/0036
+
+### 🛠️ **Solutions for Power Curves**
+
+1. **Use Concept2 ErgData App** (Recommended)
+   - Connect PM5 to ErgData app on phone/tablet
+   - ErgData can access power curve data not available via BLE
+   - Export CSV files with complete power data
+
+2. **Check PM5 Firmware**
+   - Ensure your PM5 has the latest firmware
+   - Older firmware versions may not support power curves
+
+3. **Use Different PM5 Model**
+   - Some PM5 models have better BLE power data support
+   - Check Concept2 website for model comparisons
+
+4. **Calculate Estimated Power**
+   - Use speed, stroke rate, and drag factor to estimate power
+   - Less accurate than direct measurements
 
 ## API Endpoints
 
@@ -101,10 +136,16 @@ The integrated system captures:
 
 ## Troubleshooting
 
+### Python Dependencies Not Found
+- Ensure you activated the virtual environment: `source rowing_env/bin/activate`
+- Install bleak: `pip install bleak`
+- Check that the virtual environment Python is being used
+
 ### No PM5 Found
 - Ensure your PM5 has Bluetooth enabled
 - Open the PM5's Bluetooth/Connect menu
 - Make sure no other device is connected to the PM5
+- Try running the BLE script manually: `./rowing_env/bin/python3 enhanced_ble_c2.py`
 
 ### Slow Power Updates
 Use the `enhanced_ble_c2.py` script which captures power curve data from characteristics 0x0035/0x0036.

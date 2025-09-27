@@ -55,15 +55,15 @@ function App() {
             setIsConnected(true);
           }
         } else {
-          // Use sample data if no real data
-          setRowingData(sampleData);
-          setLatestMetrics(sampleData[sampleData.length - 1]);
+          // No real data available - show blank dashboard
+          setRowingData([]);
+          setLatestMetrics({});
           setIsConnected(false);
         }
       } catch (error) {
-        // Use sample data on connection error
-        setRowingData(sampleData);
-        setLatestMetrics(sampleData[sampleData.length - 1]);
+        // Connection error - show blank dashboard
+        setRowingData([]);
+        setLatestMetrics({});
         setIsConnected(false);
       }
     };
@@ -208,74 +208,85 @@ function App() {
       </header>
 
       <main className="dashboard">
-        <div className="metrics-grid">
-          <div className="metric-card">
-            <div className="metric-label">Elapsed Time</div>
-            <div className="metric-value">
-              {latestMetrics.elapsed_s ? formatDuration(latestMetrics.elapsed_s) : '--:--'}
+        {isConnected && rowingData.length > 0 ? (
+          <div className="metrics-grid">
+            <div className="metric-card">
+              <div className="metric-label">Elapsed Time</div>
+              <div className="metric-value">
+                {latestMetrics.elapsed_s ? formatDuration(latestMetrics.elapsed_s) : '--:--'}
+              </div>
             </div>
-          </div>
-          
-          <div className="metric-card">
-            <div className="metric-label">Distance</div>
-            <div className="metric-value">
-              {latestMetrics.distance_m ? `${latestMetrics.distance_m.toFixed(1)}m` : '--'}
-            </div>
-          </div>
-          
-          <div className="metric-card">
-            <div className="metric-label">Stroke Rate</div>
-            <div className="metric-value">
-              {latestMetrics.spm ? `${latestMetrics.spm} spm` : '--'}
-            </div>
-          </div>
-          
-          <div className="metric-card">
-            <div className="metric-label">Heart Rate</div>
-            <div className="metric-value">
-              {latestMetrics.hr_bpm ? `${latestMetrics.hr_bpm} bpm` : '--'}
-            </div>
-          </div>
-          
-          <div className="metric-card">
-            <div className="metric-label">Current Pace</div>
-            <div className="metric-value">
-              {formatPace(latestMetrics.pace_cur_s_per_500m)}
-            </div>
-          </div>
-          
-          <div className="metric-card">
-            <div className="metric-label">Avg Power</div>
-            <div className="metric-value">
-              {latestMetrics.avg_power_w ? `${latestMetrics.avg_power_w}W` : '--'}
-            </div>
-          </div>
 
-          <div className="metric-card">
-            <div className="metric-label">Instant Power</div>
-            <div className="metric-value">
-              {latestMetrics.instantaneous_power_w ? `${latestMetrics.instantaneous_power_w}W` : '--'}
+            <div className="metric-card">
+              <div className="metric-label">Distance</div>
+              <div className="metric-value">
+                {latestMetrics.distance_m ? `${latestMetrics.distance_m.toFixed(1)}m` : '--'}
+              </div>
+            </div>
+
+            <div className="metric-card">
+              <div className="metric-label">Stroke Rate</div>
+              <div className="metric-value">
+                {latestMetrics.spm ? `${latestMetrics.spm} spm` : '--'}
+              </div>
+            </div>
+
+            <div className="metric-card">
+              <div className="metric-label">Heart Rate</div>
+              <div className="metric-value">
+                {latestMetrics.hr_bpm ? `${latestMetrics.hr_bpm} bpm` : '--'}
+              </div>
+            </div>
+
+            <div className="metric-card">
+              <div className="metric-label">Current Pace</div>
+              <div className="metric-value">
+                {formatPace(latestMetrics.pace_cur_s_per_500m)}
+              </div>
+            </div>
+
+            <div className="metric-card">
+              <div className="metric-label">Avg Power</div>
+              <div className="metric-value">
+                {latestMetrics.avg_power_w ? `${latestMetrics.avg_power_w}W` : '--'}
+              </div>
+            </div>
+
+            <div className="metric-card">
+              <div className="metric-label">Instant Power</div>
+              <div className="metric-value">
+                {latestMetrics.instantaneous_power_w ? `${latestMetrics.instantaneous_power_w}W` : 'N/A'}
+              </div>
+            </div>
+
+            <div className="metric-card">
+              <div className="metric-label">Peak Power</div>
+              <div className="metric-value">
+                {latestMetrics.peak_power_w ? `${latestMetrics.peak_power_w}W` : 'N/A'}
+              </div>
+            </div>
+
+            <div className="metric-card">
+              <div className="metric-label">Stroke Count</div>
+              <div className="metric-value">
+                {latestMetrics.stroke_count || '--'}
+              </div>
             </div>
           </div>
-
-          <div className="metric-card">
-            <div className="metric-label">Peak Power</div>
-            <div className="metric-value">
-              {latestMetrics.peak_power_w ? `${latestMetrics.peak_power_w}W` : '--'}
+        ) : (
+          <div className="no-data">
+            <div className="no-data-content">
+              <h2>No Rowing Data</h2>
+              <p>Connect to a rowing machine to start capturing data.</p>
+              <p>Use the "Start Capture" button above to begin data collection.</p>
             </div>
           </div>
+        )}
 
-          <div className="metric-card">
-            <div className="metric-label">Stroke Count</div>
-            <div className="metric-value">
-              {latestMetrics.stroke_count || '--'}
-            </div>
-          </div>
-        </div>
-
-        <div className="charts-container">
-          <div className="chart-card">
-            <h3>Power Curves</h3>
+        {isConnected && rowingData.length > 0 && (
+          <div className="charts-container">
+            <div className="chart-card">
+              <h3>Power Curves</h3>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={rowingData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#444" />
@@ -299,30 +310,36 @@ function App() {
                   }}
                   labelFormatter={(value) => `Time: ${formatDuration(value)}`}
                 />
-                <Line
-                  type="monotone"
-                  dataKey="instantaneous_power_w"
-                  stroke="#ff6b6b"
-                  strokeWidth={1}
-                  dot={false}
-                  name="instantaneous_power_w"
-                />
-                <Line
-                  type="monotone"
-                  dataKey="avg_power_w"
-                  stroke="#00ff88"
-                  strokeWidth={2}
-                  dot={false}
-                  name="avg_power_w"
-                />
-                <Line
-                  type="monotone"
-                  dataKey="peak_power_w"
-                  stroke="#4ecdc4"
-                  strokeWidth={1}
-                  dot={false}
-                  name="peak_power_w"
-                />
+                {rowingData.some(d => d.instantaneous_power_w) && (
+                  <Line
+                    type="monotone"
+                    dataKey="instantaneous_power_w"
+                    stroke="#ff6b6b"
+                    strokeWidth={1}
+                    dot={false}
+                    name="instantaneous_power_w"
+                  />
+                )}
+                {rowingData.some(d => d.avg_power_w) && (
+                  <Line
+                    type="monotone"
+                    dataKey="avg_power_w"
+                    stroke="#00ff88"
+                    strokeWidth={2}
+                    dot={false}
+                    name="avg_power_w"
+                  />
+                )}
+                {rowingData.some(d => d.peak_power_w) && (
+                  <Line
+                    type="monotone"
+                    dataKey="peak_power_w"
+                    stroke="#4ecdc4"
+                    strokeWidth={1}
+                    dot={false}
+                    name="peak_power_w"
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -420,6 +437,7 @@ function App() {
             </ResponsiveContainer>
           </div>
         </div>
+        )}
       </main>
     </div>
   );

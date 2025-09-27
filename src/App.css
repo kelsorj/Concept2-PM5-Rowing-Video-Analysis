@@ -266,3 +266,28 @@
     font-size: 1.4rem;
   }
 }
+
+.no-data {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  padding: 40px;
+}
+
+.no-data-content {
+  text-align: center;
+  color: #888;
+}
+
+.no-data-content h2 {
+  color: #666;
+  margin-bottom: 20px;
+  font-size: 2rem;
+}
+
+.no-data-content p {
+  margin: 10px 0;
+  font-size: 1.1rem;
+  line-height: 1.5;
+}

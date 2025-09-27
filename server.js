@@ -22,7 +22,7 @@ app.get('/api/latest-data', (req, res) => {
   try {
     // Find the most recent CSV file
     const files = fs.readdirSync(__dirname)
-      .filter(file => file.startsWith('pm5_ble_parsed_') && file.endsWith('.csv'))
+      .filter(file => file.startsWith('pm5_enhanced_parsed_') && file.endsWith('.csv'))
       .sort()
       .reverse();
     
@@ -67,8 +67,9 @@ app.post('/api/start-capture', (req, res) => {
   }
 
   try {
-    console.log('Starting BLE capture...');
-    bleProcess = spawn('python3', ['enhanced_ble_c2.py'], {
+    console.log('Starting USB capture...');
+    const pythonPath = './rowing_env/bin/python3';
+    bleProcess = spawn(pythonPath, ['enhanced_usb_c2.py'], {
       cwd: __dirname,
       stdio: ['pipe', 'pipe', 'pipe']
     });
@@ -90,26 +91,26 @@ app.post('/api/start-capture', (req, res) => {
       bleProcess = null;
     });
 
-    res.json({ success: true, message: 'BLE capture started' });
+    res.json({ success: true, message: 'USB capture started' });
   } catch (error) {
-    console.error('Error starting BLE capture:', error);
+    console.error('Error starting USB capture:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// API endpoint to stop BLE capture
+// API endpoint to stop USB capture
 app.post('/api/stop-capture', (req, res) => {
   if (!isCapturing || !bleProcess) {
     return res.json({ success: false, message: 'Not currently capturing' });
   }
 
   try {
-    console.log('Stopping BLE capture...');
+    console.log('Stopping USB capture...');
     bleProcess.kill('SIGINT'); // Send Ctrl+C
     isCapturing = false;
-    res.json({ success: true, message: 'BLE capture stopped' });
+    res.json({ success: true, message: 'USB capture stopped' });
   } catch (error) {
-    console.error('Error stopping BLE capture:', error);
+    console.error('Error stopping USB capture:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
