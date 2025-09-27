@@ -7,6 +7,15 @@ function App() {
   const [rowingData, setRowingData] = useState([]);
   const [latestMetrics, setLatestMetrics] = useState({});
   const [isConnected, setIsConnected] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [captureStatus, setCaptureStatus] = useState('idle');
+
+  // Sample data for testing
+  const sampleData = [
+    { elapsed_s: 10.0, distance_m: 35.0, spm: 24, hr_bpm: 140, avg_power_w: 180, speed_m_s: 3.5, pace_cur_s_per_500m: 143.0 },
+    { elapsed_s: 20.0, distance_m: 70.0, spm: 26, hr_bpm: 150, avg_power_w: 200, speed_m_s: 3.8, pace_cur_s_per_500m: 132.0 },
+    { elapsed_s: 30.0, distance_m: 105.0, spm: 24, hr_bpm: 155, avg_power_w: 190, speed_m_s: 3.6, pace_cur_s_per_500m: 139.0 },
+  ];
 
   // Update clock every second
   useEffect(() => {
@@ -22,7 +31,7 @@ function App() {
       try {
         const response = await fetch('http://localhost:3001/api/latest-data');
         const result = await response.json();
-        
+
         if (result.data && result.data.length > 0) {
           // Filter out empty rows and convert numeric fields
           const validData = result.data
@@ -38,16 +47,23 @@ function App() {
               pace_cur_s_per_500m: parseFloat(row.pace_cur_s_per_500m) || 0
             }))
             .slice(-100); // Keep last 100 data points for performance
-          
+
           setRowingData(validData);
-          
+
           if (validData.length > 0) {
             setLatestMetrics(validData[validData.length - 1]);
             setIsConnected(true);
           }
+        } else {
+          // Use sample data if no real data
+          setRowingData(sampleData);
+          setLatestMetrics(sampleData[sampleData.length - 1]);
+          setIsConnected(false);
         }
       } catch (error) {
-        console.error('Error fetching data:', error);
+        // Use sample data on connection error
+        setRowingData(sampleData);
+        setLatestMetrics(sampleData[sampleData.length - 1]);
         setIsConnected(false);
       }
     };
@@ -56,6 +72,75 @@ function App() {
     const interval = setInterval(fetchData, 2000);
     return () => clearInterval(interval);
   }, []);
+
+  // Check capture status every 3 seconds
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const response = await fetch('http://localhost:3001/api/capture-status');
+        const result = await response.json();
+        setIsCapturing(result.isCapturing);
+        setCaptureStatus(result.isCapturing ? 'capturing' : 'idle');
+      } catch (error) {
+        console.error('Error checking capture status:', error);
+        setCaptureStatus('error');
+      }
+    };
+
+    checkStatus();
+    const interval = setInterval(checkStatus, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Function to start BLE capture
+  const startCapture = async () => {
+    try {
+      setCaptureStatus('starting');
+      const response = await fetch('http://localhost:3001/api/start-capture', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      const result = await response.json();
+      if (result.success) {
+        setCaptureStatus('capturing');
+        setIsCapturing(true);
+      } else {
+        setCaptureStatus('error');
+        alert('Failed to start capture: ' + result.message);
+      }
+    } catch (error) {
+      console.error('Error starting capture:', error);
+      setCaptureStatus('error');
+      alert('Error starting capture: ' + error.message);
+    }
+  };
+
+  // Function to stop BLE capture
+  const stopCapture = async () => {
+    try {
+      setCaptureStatus('stopping');
+      const response = await fetch('http://localhost:3001/api/stop-capture', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      const result = await response.json();
+      if (result.success) {
+        setCaptureStatus('idle');
+        setIsCapturing(false);
+      } else {
+        setCaptureStatus('error');
+        alert('Failed to stop capture: ' + result.message);
+      }
+    } catch (error) {
+      console.error('Error stopping capture:', error);
+      setCaptureStatus('error');
+      alert('Error stopping capture: ' + error.message);
+    }
+  };
 
   const formatTime = (date) => {
     return date.toLocaleTimeString('en-US', { 
@@ -92,6 +177,32 @@ function App() {
           <div className="connection-status">
             <div className={`status-indicator ${isConnected ? 'connected' : 'disconnected'}`}></div>
             <span>{isConnected ? 'Connected' : 'Disconnected'}</span>
+          </div>
+
+          <div className="capture-controls">
+            <button
+              className={`capture-button start ${captureStatus === 'capturing' ? 'disabled' : ''}`}
+              onClick={startCapture}
+              disabled={captureStatus === 'capturing' || captureStatus === 'starting'}
+            >
+              {captureStatus === 'starting' ? 'Starting...' : 'Start Capture'}
+            </button>
+            <button
+              className={`capture-button stop ${captureStatus !== 'capturing' ? 'disabled' : ''}`}
+              onClick={stopCapture}
+              disabled={captureStatus !== 'capturing'}
+            >
+              {captureStatus === 'stopping' ? 'Stopping...' : 'Stop Capture'}
+            </button>
+            <div className="capture-status">
+              <span className={`status-text ${captureStatus}`}>
+                {captureStatus === 'capturing' && '🔴 Recording'}
+                {captureStatus === 'idle' && '⏸️ Ready'}
+                {captureStatus === 'starting' && '⏳ Starting...'}
+                {captureStatus === 'stopping' && '⏳ Stopping...'}
+                {captureStatus === 'error' && '❌ Error'}
+              </span>
+            </div>
           </div>
         </div>
       </header>

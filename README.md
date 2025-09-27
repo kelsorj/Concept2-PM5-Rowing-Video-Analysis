@@ -5,9 +5,11 @@ A real-time rowing data visualization dashboard that displays Concept2 PM5 rowin
 ## Features
 
 - **Real-time Computer Clock**: Shows current computer time for video synchronization
+- **Integrated BLE Capture**: Start/stop rowing data capture directly from the web interface
 - **Live Rowing Metrics**: Displays elapsed time, distance, stroke rate, heart rate, pace, and power
 - **Power Curve Visualization**: Shows instantaneous power, average power, and peak power over time
 - **Multiple Charts**: Power curves, stroke rate, distance progress, and heart rate over time
+- **Capture Status**: Real-time status indicators for BLE connection and data recording
 - **Responsive Design**: Works on desktop and mobile devices
 
 ## Setup Instructions
@@ -39,18 +41,39 @@ In a new terminal window:
 npm run server
 ```
 
-This starts both the Express server (port 3001) and React app (port 3000).
+This starts the Express server on port 3001, serving both the API and React app.
 
 ### 4. Open Dashboard
 
-Navigate to `http://localhost:3000` in your browser.
+Navigate to `http://localhost:3001` in your browser.
 
 ## Usage
 
-1. **Start rowing** on your Concept2 PM5 with "Just Row" mode
-2. **Record video** while rowing - use the computer clock in the dashboard to sync timing
-3. **Monitor real-time data** as you row
-4. **Analyze power curves** to see your stroke power distribution
+### Quick Start
+1. **Open Dashboard**: Navigate to `http://localhost:3001` in your browser
+2. **Click "Start Capture"**: This launches the BLE data collection automatically
+3. **Start rowing** on your Concept2 PM5 with "Just Row" mode
+4. **Record video** while rowing - use the computer clock in the dashboard to sync timing
+5. **Monitor real-time data** as you row
+6. **Click "Stop Capture"** when finished
+
+### Manual Usage (if needed)
+If you prefer running scripts manually:
+```bash
+python3 enhanced_ble_c2.py
+```
+
+## Integrated BLE Control
+
+The dashboard now includes direct control over the rowing data capture:
+
+- **Start Capture Button**: Launches the Python BLE capture script
+- **Stop Capture Button**: Gracefully stops data collection
+- **Status Indicators**:
+  - 🔴 **Recording**: Actively capturing data
+  - ⏸️ **Ready**: Ready to start capture
+  - ⏳ **Starting/Stopping**: Transition states
+  - ❌ **Error**: Connection or capture issues
 
 ## Power Data Explanation
 
@@ -58,7 +81,7 @@ Navigate to `http://localhost:3000` in your browser.
 The original BLE script only captured **average power** which updates slowly. Power values appeared static because they represented workout averages, not instantaneous power.
 
 ### Enhanced Solution
-The new `enhanced_ble_c2.py` script captures:
+The integrated system captures:
 - **Instantaneous Power**: Real-time power during each stroke phase
 - **Peak Power**: Maximum power achieved in each stroke
 - **Average Power**: Traditional workout average
@@ -67,6 +90,14 @@ The new `enhanced_ble_c2.py` script captures:
 ### Data Sources
 - **Characteristics 0x0031-0x0033**: Basic rowing metrics (speed, distance, heart rate, etc.)
 - **Characteristics 0x0035-0x0036**: Detailed power curve and stroke data
+
+## API Endpoints
+
+- `GET /api/latest-data` - Get latest rowing data from CSV files
+- `GET /api/time` - Get current server time
+- `POST /api/start-capture` - Start BLE data capture (launches Python script)
+- `POST /api/stop-capture` - Stop BLE data capture (gracefully terminates)
+- `GET /api/capture-status` - Get current capture status
 
 ## Troubleshooting
 
