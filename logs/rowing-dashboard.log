@@ -13,3 +13,11 @@
 2025-09-27 18:08:00 -07:00:   POST /api/start-capture - Start USB data capture
 2025-09-27 18:08:00 -07:00:   POST /api/stop-capture - Stop USB data capture
 2025-09-27 18:08:00 -07:00:   GET /api/capture-status - Get capture status
+2025-09-27 18:09:12 -07:00: Server shutting down...
+2025-09-27 18:09:12 -07:00: Server running on http://localhost:3001
+2025-09-27 18:09:12 -07:00: API endpoints:
+2025-09-27 18:09:12 -07:00:   GET /api/latest-data - Get latest rowing data
+2025-09-27 18:09:12 -07:00:   GET /api/time - Get current server time
+2025-09-27 18:09:12 -07:00:   POST /api/start-capture - Start USB data capture
+2025-09-27 18:09:12 -07:00:   POST /api/stop-capture - Stop USB data capture
+2025-09-27 18:09:12 -07:00:   GET /api/capture-status - Get capture status
