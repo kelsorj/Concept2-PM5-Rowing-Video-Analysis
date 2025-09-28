@@ -10,6 +10,7 @@ const PORT = 3001;
 
 let bleProcess = null;
 let isCapturing = false;
+let lastDataTime = null;
 
 app.use(cors());
 app.use(express.json());
@@ -22,25 +23,45 @@ app.get('/api/latest-data', (req, res) => {
   try {
     // Find the most recent CSV file
     const files = fs.readdirSync(__dirname)
-      .filter(file => file.startsWith('pm5_enhanced_parsed_') && file.endsWith('.csv'))
+      .filter(file => (file.startsWith('pm5_enhanced_parsed_') || file.startsWith('pm5_py3row_parsed_')) && file.endsWith('.csv'))
       .sort()
       .reverse();
     
     if (files.length === 0) {
-      return res.json({ data: [], message: 'No data files found' });
+      return res.json({
+        data: [],
+        message: 'No data files found',
+        isConnected: false,
+        lastDataTime: lastDataTime
+      });
     }
-    
+
     const latestFile = files[0];
     const filePath = path.join(__dirname, latestFile);
     const csvContent = fs.readFileSync(filePath, 'utf8');
-    
+
     Papa.parse(csvContent, {
       header: true,
       complete: (results) => {
-        res.json({ 
-          data: results.data,
+        // Update last data time if we have data
+        const recentData = results.data.slice(-10); // Check last 10 rows
+        for (let i = recentData.length - 1; i >= 0; i--) {
+          if (recentData[i].timestamp_iso) {
+            lastDataTime = new Date(recentData[i].timestamp_iso);
+            break;
+          }
+        }
+
+        // Check if data is recent (within last 10 seconds)
+        const now = new Date();
+        const isConnected = lastDataTime && (now - lastDataTime) < 10000; // 10 seconds
+
+        res.json({
+          data: results.data.slice(-50), // Return last 50 rows
           filename: latestFile,
-          count: results.data.length
+          count: results.data.length,
+          isConnected: isConnected,
+          lastDataTime: lastDataTime
         });
       },
       error: (error) => {

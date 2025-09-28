@@ -174,20 +174,32 @@ def parse_extra2(b: bytes):
 # --- main --------------------------------------------------------------------
 
 async def main():
-    print("Scanning for PM5…")
-    devs = await BleakScanner.discover(timeout=5.0)
-    pm = next((d for d in devs if (d.name or "").startswith("PM5")), None)
-    if not pm:
-        raise SystemExit("No PM5 found. On the PM5, open Bluetooth/Connect and try again.")
+    max_retries = 3
+    retry_count = 0
 
-    print(f"Connecting to {pm.name} @ {pm.address} …")
-    async with BleakClient(pm) as cli:
-        # Set fastest notify rate
+    while retry_count < max_retries:
         try:
-            await cli.write_gatt_char(CHAR_RATE, bytes([3]), response=True)
-            print("Set sample rate to fastest (~100ms)")
-        except Exception as e:
-            print(f"Could not set sample rate: {e}")
+            print(f"Scanning for PM5… (attempt {retry_count + 1}/{max_retries})")
+            devs = await BleakScanner.discover(timeout=5.0)
+            pm = next((d for d in devs if (d.name or "").startswith("PM5")), None)
+            if not pm:
+                if retry_count < max_retries - 1:
+                    print("No PM5 found. Make sure PM5 is powered on and Bluetooth enabled.")
+                    print("Retrying in 3 seconds...")
+                    await asyncio.sleep(3.0)
+                    retry_count += 1
+                    continue
+                else:
+                    raise SystemExit("No PM5 found after multiple attempts. On the PM5, open Bluetooth/Connect and try again.")
+
+            print(f"Connecting to {pm.name} @ {pm.address} …")
+            async with BleakClient(pm) as cli:
+                # Set fastest notify rate
+                try:
+                    await cli.write_gatt_char(CHAR_RATE, bytes([3]), response=True)
+                    print("Set sample rate to fastest (~100ms)")
+                except Exception as e:
+                    print(f"Could not set sample rate: {e}")
 
         # Prepare CSVs
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -264,9 +276,13 @@ async def main():
         def on_add2(_, data: bytearray):
             b = bytes(data); log_raw("0033", b); latest["add2"] = parse_add2(b)
         def on_extra1(_, data: bytearray):
-            b = bytes(data); log_raw("0035", b); 
+            b = bytes(data)
+            log_raw("0035", b)
+            print(f"DEBUG: EXTRA1 received {len(b)} bytes: {b.hex()[:100]}...")
             parsed = parse_extra1(b)
             latest["extra1"] = parsed
+            if "force_curve" in parsed:
+                print(f"DEBUG: Force curve captured with {len(parsed['force_curve'])} points!")
             log_power_curve(parsed)  # Log power curve data separately
         def on_extra2(_, data: bytearray):
             b = bytes(data); log_raw("0036", b); latest["extra2"] = parse_extra2(b)
@@ -284,14 +300,35 @@ async def main():
         print(f"Logging power curve data → {power_name}")
         print("Start 'Just Row' and pull… (Ctrl+C to stop)")
 
+        # Connection monitoring
+        last_data_time = time.time()
+        connection_warnings = 0
+        last_heartbeat = time.time()
+
         # UI loop
         try:
             while True:
+                current_time = time.time()
+
+                # Send heartbeat every 30 seconds to keep PM5 active
+                if current_time - last_heartbeat > 30.0:
+                    try:
+                        # Try to read a characteristic to keep connection alive
+                        await cli.read_gatt_char(CHAR_GEN)
+                        last_heartbeat = current_time
+                        print("💓 Heartbeat sent to keep PM5 active")
+                    except Exception as hb_error:
+                        print(f"⚠️  Heartbeat failed: {hb_error}")
+
                 row = merge_row()
+
                 if row:
+                    last_data_time = current_time
+                    connection_warnings = 0
+
                     row["timestamp_iso"] = datetime.datetime.now().isoformat(timespec="milliseconds")
                     pw.writerow({k: row.get(k) for k in parsed_fields}); pf.flush()
-                    
+
                     # Enhanced console display
                     et   = f"{row.get('elapsed_s',0.0):6.1f}s"
                     dist = f"{row.get('distance_m',0.0):7.1f}m"
@@ -302,21 +339,53 @@ async def main():
                     inst_pwr = f"{row.get('instantaneous_power_w','--'):>3}W"
                     peak_pwr = f"{row.get('peak_power_w','--'):>3}W"
                     stroke = f"{row.get('stroke_count','--'):>3}"
-                    
+
                     print(f"{et} {dist}  {spm}  {hr}  {pace}  Avg:{avg_pwr}  Inst:{inst_pwr}  Peak:{peak_pwr}  Stroke:{stroke}")
+                else:
+                    # Check for stale connection
+                    if current_time - last_data_time > 5.0 and connection_warnings == 0:
+                        print("⚠️  No data received for 5 seconds - PM5 may have stopped transmitting")
+                        print("   Try: 1) Wake PM5 by pressing buttons, 2) Check battery, 3) Reconnect BLE")
+                        connection_warnings += 1
+                    elif current_time - last_data_time > 15.0 and connection_warnings == 1:
+                        print("⚠️  Still no data - PM5 may need restart or BLE reconnection")
+                        connection_warnings += 1
+
                 await asyncio.sleep(0.05)  # 20Hz refresh
         except KeyboardInterrupt:
             pass
-        finally:
-            # Cleanup
-            for ch in (CHAR_GEN, CHAR_ADD1, CHAR_ADD2, CHAR_EXTRA1, CHAR_EXTRA2):
-                try: await cli.stop_notify(ch)
-                except Exception: pass
-            pf.close(); rf.close(); powerf.close()
-            print("Saved:")
-            print("  ", parsed_name)
-            print("  ", raw_name)
-            print("  ", power_name)
+        except Exception as e:
+            print(f"❌ Connection error: {e}")
+            print("   Attempting to reconnect... (Ctrl+C to exit)")
+
+            # Try to reconnect
+            try:
+                await asyncio.sleep(2.0)  # Brief pause before reconnect
+                print("🔄 Attempting BLE reconnection...")
+                # The async with context will handle reconnection
+            except Exception as reconn_error:
+                print(f"❌ Reconnection failed: {reconn_error}")
+                finally:
+                    # Cleanup
+                    for ch in (CHAR_GEN, CHAR_ADD1, CHAR_ADD2, CHAR_EXTRA1, CHAR_EXTRA2):
+                        try: await cli.stop_notify(ch)
+                        except Exception: pass
+                    pf.close(); rf.close(); powerf.close()
+                    print("Saved:")
+                    print("  ", parsed_name)
+                    print("  ", raw_name)
+                    print("  ", power_name)
+                    return  # Success - exit retry loop
+
+        except Exception as conn_error:
+            print(f"❌ Connection failed (attempt {retry_count + 1}): {conn_error}")
+            if retry_count < max_retries - 1:
+                print("Retrying in 5 seconds...")
+                await asyncio.sleep(5.0)
+                retry_count += 1
+                continue
+            else:
+                raise SystemExit(f"Failed to connect after {max_retries} attempts: {conn_error}")
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -7,6 +7,7 @@ function App() {
   const [rowingData, setRowingData] = useState([]);
   const [latestMetrics, setLatestMetrics] = useState({});
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [captureStatus, setCaptureStatus] = useState('disconnected');
 
   // Sample data for testing
@@ -43,7 +44,8 @@ function App() {
               hr_bpm: parseInt(row.hr_bpm) || 0,
               avg_power_w: parseInt(row.avg_power_w) || 0,
               speed_m_s: parseFloat(row.speed_m_s) || 0,
-              pace_cur_s_per_500m: parseFloat(row.pace_cur_s_per_500m) || 0
+              pace_cur_s_per_500m: parseFloat(row.pace_cur_s_per_500m) || 0,
+              forceplot: row.forceplot ? JSON.parse(row.forceplot) : []
             }))
             .slice(-100); // Keep last 100 data points for performance
 
@@ -51,14 +53,16 @@ function App() {
 
           if (validData.length > 0) {
             setLatestMetrics(validData[validData.length - 1]);
-            setIsConnected(true);
           }
         } else {
           // No real data available - show blank dashboard
           setRowingData([]);
           setLatestMetrics({});
-          setIsConnected(false);
         }
+
+        // Use server's connection status
+        setIsConnected(result.isConnected || false);
+        setConnectionStatus(result.isConnected ? 'connected' : 'disconnected');
       } catch (error) {
         // Connection error - show blank dashboard
         setRowingData([]);
@@ -108,6 +112,33 @@ function App() {
     return `${mins}:${secs.padStart(4, '0')}`;
   };
 
+  // Function to get force curve data for the latest stroke
+  const getForceCurveData = () => {
+    if (!rowingData.length || !latestMetrics.forceplot || latestMetrics.forceplot.length === 0) {
+      return [];
+    }
+    
+    // Parse the forceplot JSON string if it's a string
+    let forceData = latestMetrics.forceplot;
+    if (typeof forceData === 'string') {
+      try {
+        forceData = JSON.parse(forceData);
+      } catch (e) {
+        console.error('Error parsing forceplot:', e);
+        return [];
+      }
+    }
+    
+    if (!Array.isArray(forceData) || forceData.length === 0) {
+      return [];
+    }
+    
+    return forceData.map((force, index) => ({
+      point: index,
+      force: force
+    }));
+  };
+
   const formatPace = (pace) => {
     if (!pace || pace === 0) return '--:--';
     const mins = Math.floor(pace / 60);
@@ -133,15 +164,15 @@ function App() {
             <div className="usb-instructions">
               <div className="instruction-header">🚀 To Start Rowing Data Capture:</div>
               <div className="instruction-steps">
-                <div className="step">1. Connect PM5 via USB cable</div>
+                <div className="step">1. Connect PM5 via USB cable (square USB-B port)</div>
                 <div className="step">2. Run in separate terminal:</div>
-                <div className="command">sudo ./rowing_env/bin/python3 enhanced_usb_c2_hid.py</div>
+                <div className="command">sudo ./rowing_env/bin/python3 py3row_usb_capture.py</div>
                 <div className="step">3. Start rowing - data appears automatically!</div>
               </div>
             </div>
             <div className="capture-status">
-              <span className={`status-text ${captureStatus}`}>
-                {isConnected ? '🟢 Live Data' : '⏸️ Waiting for USB connection'}
+              <span className={`status-text ${connectionStatus}`}>
+                {isConnected ? '🟢 Live Data' : '⏸️ Waiting for rowing data'}
               </span>
             </div>
           </div>
@@ -227,66 +258,41 @@ function App() {
         {isConnected && rowingData.length > 0 && (
           <div className="charts-container">
             <div className="chart-card">
-              <h3>Power Curves</h3>
+              <h3>Complete Stroke Force Curves</h3>
             <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={rowingData}>
+              <LineChart data={getForceCurveData()}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#444" />
                 <XAxis
-                  dataKey="elapsed_s"
+                  dataKey="point"
                   stroke="#888"
-                  tickFormatter={(value) => formatDuration(value)}
+                  label={{ value: 'Stroke Position (0=Start, End=Finish)', position: 'insideBottom', offset: -5 }}
                 />
-                <YAxis stroke="#888" />
+                <YAxis 
+                  stroke="#888" 
+                  label={{ value: 'Force', angle: -90, position: 'insideLeft' }}
+                />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: '#2a2a2a',
                     border: '1px solid #444',
                     color: '#fff'
                   }}
-                  formatter={(value, name) => {
-                    if (name === 'instantaneous_power_w') return [`${value}W`, 'Instant Power'];
-                    if (name === 'avg_power_w') return [`${value}W`, 'Average Power'];
-                    if (name === 'peak_power_w') return [`${value}W`, 'Peak Power'];
-                    return [value, name];
-                  }}
-                  labelFormatter={(value) => `Time: ${formatDuration(value)}`}
+                  formatter={(value, name) => [value, 'Force']}
                 />
-                {rowingData.some(d => d.instantaneous_power_w) && (
-                  <Line
-                    type="monotone"
-                    dataKey="instantaneous_power_w"
-                    stroke="#ff6b6b"
-                    strokeWidth={1}
-                    dot={false}
-                    name="instantaneous_power_w"
-                  />
-                )}
-                {rowingData.some(d => d.avg_power_w) && (
-                  <Line
-                    type="monotone"
-                    dataKey="avg_power_w"
-                    stroke="#00ff88"
-                    strokeWidth={2}
-                    dot={false}
-                    name="avg_power_w"
-                  />
-                )}
-                {rowingData.some(d => d.peak_power_w) && (
-                  <Line
-                    type="monotone"
-                    dataKey="peak_power_w"
-                    stroke="#4ecdc4"
-                    strokeWidth={1}
-                    dot={false}
-                    name="peak_power_w"
-                  />
-                )}
+                <Line
+                  type="monotone"
+                  dataKey="force"
+                  stroke="#00ff88"
+                  strokeWidth={3}
+                  dot={false}
+                  name="Force Curve"
+                />
               </LineChart>
             </ResponsiveContainer>
           </div>
 
           <div className="chart-card">
-            <h3>Stroke Rate Over Time</h3>
+            <h3>Power Over Time</h3>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={rowingData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#444" />
@@ -302,13 +308,13 @@ function App() {
                     border: '1px solid #444',
                     color: '#fff'
                   }}
-                  formatter={(value) => [`${value} spm`, 'Stroke Rate']}
+                  formatter={(value) => [`${value}W`, 'Power']}
                   labelFormatter={(value) => `Time: ${formatDuration(value)}`}
                 />
                 <Line 
                   type="monotone" 
-                  dataKey="spm" 
-                  stroke="#ff6b6b" 
+                  dataKey="avg_power_w" 
+                  stroke="#4ecdc4" 
                   strokeWidth={2}
                   dot={false}
                 />
