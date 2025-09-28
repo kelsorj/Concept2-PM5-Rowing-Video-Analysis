@@ -23,21 +23,21 @@ npm install
 # Install Python dependencies in virtual environment
 python3 -m venv rowing_env
 source rowing_env/bin/activate  # On Windows: rowing_env\Scripts\activate
-pip install bleak
+pip install bleak git+https://github.com/droogmic/Py3Row.git
+
+# Install libusb (required for USB access on macOS)
+brew install libusb
+
+# Note: USB access requires sudo permissions on macOS
 ```
 
 ### 2. Start the Data Server
 
-First, run the enhanced BLE data collection script to capture rowing data:
-
 ```bash
-python3 enhanced_ble_c2.py
+npm run server
 ```
 
-This will:
-- Connect to your Concept2 PM5 via Bluetooth
-- Capture detailed rowing data including power curves
-- Generate CSV files: `pm5_enhanced_parsed_*.csv`, `pm5_enhanced_raw_*.csv`, `pm5_power_curve_*.csv`
+This starts the Express server on port 3001, serving both the API and React app.
 
 ### 3. Start the React Dashboard
 
@@ -55,97 +55,98 @@ Navigate to `http://localhost:3001` in your browser.
 
 ## Usage
 
-### Quick Start
-1. **Open Dashboard**: Navigate to `http://localhost:3001` in your browser
-2. **Click "Start Capture"**: This launches the BLE data collection automatically
-3. **Start rowing** on your Concept2 PM5 with "Just Row" mode
-4. **Record video** while rowing - use the computer clock in the dashboard to sync timing
-5. **Monitor real-time data** as you row
-6. **Click "Stop Capture"** when finished
+### Quick Start (USB Method)
+1. **Connect PM5**: Use USB cable from PM5 to computer (square USB-B port on PM5)
+2. **Open Dashboard**: Navigate to `http://localhost:3001` in your browser
+3. **Click "Start Capture"**: Follow the popup instructions
+4. **Run USB Script**: In a separate terminal, run:
+   ```bash
+   sudo ./rowing_env/bin/python3 enhanced_usb_c2.py
+   ```
+5. **Start rowing** on your Concept2 PM5 with "Just Row" mode
+6. **Monitor real-time data** as you row (including force curves!)
+7. **Stop the script** with Ctrl+C when finished
 
 ### Manual Usage (if needed)
 If you prefer running scripts manually:
 ```bash
-python3 enhanced_ble_c2.py
+source rowing_env/bin/activate
+python3 enhanced_usb_c2.py
 ```
 
-## Integrated BLE Control
+## Integrated USB Control
 
 The dashboard now includes direct control over the rowing data capture:
 
-- **Start Capture Button**: Launches the Python BLE capture script
+- **Start Capture Button**: Launches the Python USB capture script
 - **Stop Capture Button**: Gracefully stops data collection
 - **Status Indicators**:
-  - 🔴 **Recording**: Actively capturing data
+  - 🔴 **Recording**: Actively capturing data via USB
   - ⏸️ **Ready**: Ready to start capture
   - ⏳ **Starting/Stopping**: Transition states
   - ❌ **Error**: Connection or capture issues
+
+**USB Connection Required**: Make sure your PM5 is connected via USB cable to your computer.
 
 ## Power Data Explanation
 
 ### Current Limitations
 The original BLE script only captured **average power** which updates slowly. Power values appeared static because they represented workout averages, not instantaneous power.
 
-### Enhanced Solution
-The integrated system captures:
+### Enhanced USB Solution
+The USB connection provides complete access to PM5 data:
 - **Basic Metrics**: Time, distance, stroke rate, pace, heart rate ✅
-- **Average Power**: Traditional workout average power ✅
-- **Instantaneous Power**: Real-time power curves (PM5 firmware dependent) ⚠️
-- **Peak Power**: Maximum power per stroke (PM5 firmware dependent) ⚠️
+- **Real-time Power**: Current power output (watts) ✅
+- **Force Curves**: Actual force curve data from each stroke ✅
+- **High Frequency**: Updates at 5Hz (every 200ms) ✅
 
 ### Data Sources
-- **Characteristics 0x0031-0x0033**: Basic rowing metrics (speed, distance, heart rate, etc.) ✅
-- **Characteristics 0x0035-0x0036**: Detailed power curve data (not supported by all PM5 models) ⚠️
+- **USB Direct Connection**: Full access to PM5 internal data ✅
+- **Py3Row Library**: Professional rowing machine communication
+- **Force Plot Data**: Raw force measurements from each stroke
 
-### ⚠️ **Power Data Limitations**
+### ✅ **USB Advantages over BLE**
 
-**Important**: Not all Concept2 PM5 models/firmware versions support power curve data via BLE. If you see "N/A" for instantaneous and peak power, your PM5 doesn't provide this data through Bluetooth.
+**USB provides:**
+- **Complete power data** including real-time watts
+- **Force curves** - the actual power curve you need!
+- **Higher update rate** (5Hz vs 1-2Hz BLE)
+- **More reliable connection** (no Bluetooth interference)
+- **All rowing metrics** without firmware limitations
 
-**Symptoms of missing power data:**
-- Instantaneous Power: N/A
-- Peak Power: N/A
-- Average Power: May be 0 or low values
-- No data from characteristics 0035/0036
-
-### 🛠️ **Solutions for Power Curves**
-
-1. **Use Concept2 ErgData App** (Recommended)
-   - Connect PM5 to ErgData app on phone/tablet
-   - ErgData can access power curve data not available via BLE
-   - Export CSV files with complete power data
-
-2. **Check PM5 Firmware**
-   - Ensure your PM5 has the latest firmware
-   - Older firmware versions may not support power curves
-
-3. **Use Different PM5 Model**
-   - Some PM5 models have better BLE power data support
-   - Check Concept2 website for model comparisons
-
-4. **Calculate Estimated Power**
-   - Use speed, stroke rate, and drag factor to estimate power
-   - Less accurate than direct measurements
+**What you'll get:**
+- Instantaneous power during each stroke
+- Peak power calculations from force curves
+- Complete rowing analytics
+- Video synchronization with computer clock
 
 ## API Endpoints
 
 - `GET /api/latest-data` - Get latest rowing data from CSV files
 - `GET /api/time` - Get current server time
-- `POST /api/start-capture` - Start BLE data capture (launches Python script)
-- `POST /api/stop-capture` - Stop BLE data capture (gracefully terminates)
+- `POST /api/start-capture` - Start USB data capture (launches Python script)
+- `POST /api/stop-capture` - Stop USB data capture (gracefully terminates)
 - `GET /api/capture-status` - Get current capture status
 
 ## Troubleshooting
 
 ### Python Dependencies Not Found
 - Ensure you activated the virtual environment: `source rowing_env/bin/activate`
-- Install bleak: `pip install bleak`
+- Install dependencies: `pip install bleak git+https://github.com/droogmic/Py3Row.git`
 - Check that the virtual environment Python is being used
 
 ### No PM5 Found
-- Ensure your PM5 has Bluetooth enabled
-- Open the PM5's Bluetooth/Connect menu
-- Make sure no other device is connected to the PM5
-- Try running the BLE script manually: `./rowing_env/bin/python3 enhanced_ble_c2.py`
+- **USB Connection**: Ensure PM5 is connected via USB cable (square USB-B port on PM5)
+- **Power**: Make sure PM5 is powered on and awake
+- **USB Permissions**: On macOS, USB access requires sudo permissions
+- **Test Connection**: Try running: `sudo ./rowing_env/bin/python3 enhanced_usb_c2.py`
+- **Alternative**: Use the helper script: `./start_usb_capture.sh`
+
+### USB Permission Issues (macOS)
+- **Sudo Required**: macOS requires administrator privileges for USB device access
+- **Password Prompt**: You may be prompted for your sudo password
+- **Helper Script**: Use `./start_usb_capture.sh` for easier sudo access
+- **Manual Method**: `sudo -E ./rowing_env/bin/python3 enhanced_usb_c2.py`
 
 ### Slow Power Updates
 Use the `enhanced_ble_c2.py` script which captures power curve data from characteristics 0x0035/0x0036.

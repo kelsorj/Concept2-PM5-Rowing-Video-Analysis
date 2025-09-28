@@ -27,6 +27,21 @@ if dev is None:
 erg = pyrow.PyErg(dev)
 print("Device info:", erg.get_erg())
 
+# Drop root privileges after opening device
+import os
+import pwd
+import grp
+
+# Get the original user's UID and GID
+original_uid = int(os.environ.get('SUDO_UID', os.getuid()))
+original_gid = int(os.environ.get('SUDO_GID', os.getgid()))
+
+# Drop privileges
+os.setgid(original_gid)
+os.setuid(original_uid)
+
+print(f"Dropped privileges to UID {original_uid}, GID {original_gid}")
+
 # Filenames - use same naming convention as BLE
 ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 parsed_name = f"pm5_enhanced_parsed_{ts}.csv"

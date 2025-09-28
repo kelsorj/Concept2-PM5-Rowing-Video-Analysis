@@ -108,12 +108,25 @@ function App() {
         setIsCapturing(true);
       } else {
         setCaptureStatus('error');
-        alert('Failed to start capture: ' + result.message);
+
+        // Check if it's the manual USB instruction
+        if (result.message.includes('Please run the USB capture script manually')) {
+          alert('USB Setup Required: Please run this command in a separate terminal:\n\nsudo ./rowing_env/bin/python3 enhanced_usb_c2.py\n\nThen refresh this dashboard to see live rowing data!');
+          setCaptureStatus('ready');
+        } else {
+          alert('Failed to start capture: ' + result.message);
+        }
       }
     } catch (error) {
       console.error('Error starting capture:', error);
       setCaptureStatus('error');
-      alert('Error starting capture: ' + error.message);
+
+      // Check if it's a USB permission error
+      if (error.message.includes('USB') || error.message.includes('sudo')) {
+        alert('USB Permission Required: Please run the USB script manually with sudo:\n\nsudo -E ./rowing_env/bin/python3 enhanced_usb_c2.py\n\nOr use the helper script: ./start_usb_capture.sh');
+      } else {
+        alert('Error starting capture: ' + error.message);
+      }
     }
   };
 
@@ -180,27 +193,18 @@ function App() {
           </div>
 
           <div className="capture-controls">
-            <button
-              className={`capture-button start ${captureStatus === 'capturing' ? 'disabled' : ''}`}
-              onClick={startCapture}
-              disabled={captureStatus === 'capturing' || captureStatus === 'starting'}
-            >
-              {captureStatus === 'starting' ? 'Starting...' : 'Start Capture'}
-            </button>
-            <button
-              className={`capture-button stop ${captureStatus !== 'capturing' ? 'disabled' : ''}`}
-              onClick={stopCapture}
-              disabled={captureStatus !== 'capturing'}
-            >
-              {captureStatus === 'stopping' ? 'Stopping...' : 'Stop Capture'}
-            </button>
+            <div className="usb-instructions">
+              <div className="instruction-header">🚀 To Start Rowing Data Capture:</div>
+              <div className="instruction-steps">
+                <div className="step">1. Connect PM5 via USB cable</div>
+                <div className="step">2. Run in separate terminal:</div>
+                <div className="command">sudo ./rowing_env/bin/python3 enhanced_usb_c2.py</div>
+                <div className="step">3. Start rowing - data appears automatically!</div>
+              </div>
+            </div>
             <div className="capture-status">
               <span className={`status-text ${captureStatus}`}>
-                {captureStatus === 'capturing' && '🔴 Recording'}
-                {captureStatus === 'idle' && '⏸️ Ready'}
-                {captureStatus === 'starting' && '⏳ Starting...'}
-                {captureStatus === 'stopping' && '⏳ Stopping...'}
-                {captureStatus === 'error' && '❌ Error'}
+                {isConnected ? '🟢 Live Data' : '⏸️ Waiting for USB connection'}
               </span>
             </div>
           </div>

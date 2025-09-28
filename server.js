@@ -68,10 +68,15 @@ app.post('/api/start-capture', (req, res) => {
 
   try {
     console.log('Starting USB capture...');
-    const pythonPath = './rowing_env/bin/python3';
-    bleProcess = spawn(pythonPath, ['enhanced_usb_c2.py'], {
-      cwd: __dirname,
-      stdio: ['pipe', 'pipe', 'pipe']
+    console.log('Note: Run this command in a separate terminal:');
+    console.log('sudo ./rowing_env/bin/python3 enhanced_usb_c2.py');
+    console.log('Then refresh the dashboard to see live data.');
+
+    // Don't actually start the process - just provide instructions
+    // The user runs the USB script manually with sudo
+    return res.json({
+      success: false,
+      message: 'Please run the USB capture script manually with sudo in a separate terminal, then refresh the dashboard.'
     });
 
     isCapturing = true;
@@ -133,8 +138,8 @@ app.listen(PORT, () => {
   console.log('API endpoints:');
   console.log(`  GET /api/latest-data - Get latest rowing data`);
   console.log(`  GET /api/time - Get current server time`);
-  console.log(`  POST /api/start-capture - Start BLE data capture`);
-  console.log(`  POST /api/stop-capture - Stop BLE data capture`);
+  console.log(`  POST /api/start-capture - Start USB data capture`);
+  console.log(`  POST /api/stop-capture - Stop USB data capture`);
   console.log(`  GET /api/capture-status - Get capture status`);
 });
 
