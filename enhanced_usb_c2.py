@@ -4,7 +4,18 @@
 # - Captures force curves and power data
 # - Provides same CSV output format as BLE version
 
-import os, csv, time, json, datetime, usb.core, usb.util
+import os, csv, time, json, datetime
+
+# Check if we have sudo access - required for macOS USB HID devices
+if os.geteuid() != 0:
+    print("ERROR: This script requires sudo privileges to access USB devices on macOS.")
+    print("Please run with: sudo ./rowing_env/bin/python3 enhanced_usb_c2.py")
+    print("\nNote: macOS requires elevated permissions for all USB HID device communication.")
+    exit(1)
+
+print("✓ Running with sudo privileges - USB access granted")
+
+import usb.core, usb.util
 from usb.backend import libusb1
 from pyrow import pyrow
 
@@ -24,23 +35,15 @@ dev = usb.core.find(idVendor=C2_VENDOR_ID, backend=backend)
 if dev is None:
     raise SystemExit("No Concept2 PM detected over USB. Use the square USB‑B port and wake the PM5.")
 
-erg = pyrow.PyErg(dev)
-print("Device info:", erg.get_erg())
-
-# Drop root privileges after opening device
-import os
-import pwd
-import grp
-
-# Get the original user's UID and GID
-original_uid = int(os.environ.get('SUDO_UID', os.getuid()))
-original_gid = int(os.environ.get('SUDO_GID', os.getgid()))
-
-# Drop privileges
-os.setgid(original_gid)
-os.setuid(original_uid)
-
-print(f"Dropped privileges to UID {original_uid}, GID {original_gid}")
+try:
+    erg = pyrow.PyErg(dev)
+    print("✓ Device initialized successfully")
+    print("Device info:", erg.get_erg())
+except Exception as e:
+    print(f"❌ Failed to initialize PM5: {e}")
+    print("This may be due to USB permission issues even with sudo.")
+    print("Try unplugging and replugging the PM5, then run the script again.")
+    exit(1)
 
 # Filenames - use same naming convention as BLE
 ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")

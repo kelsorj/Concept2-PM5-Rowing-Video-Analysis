@@ -80,80 +80,78 @@
 
 .capture-controls {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 15px;
-  flex-wrap: wrap;
+  margin-top: 10px;
 }
 
-.capture-button {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 6px;
-  font-size: 0.9rem;
+.usb-instructions {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 16px;
+  max-width: 500px;
+  backdrop-filter: blur(10px);
+}
+
+.instruction-header {
+  font-size: 18px;
   font-weight: bold;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  min-width: 120px;
+  color: #00ff88;
+  margin-bottom: 12px;
+  text-align: center;
 }
 
-.capture-button.start {
-  background: linear-gradient(45deg, #00ff88, #4ecdc4);
-  color: #000;
+.instruction-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.capture-button.start:hover:not(.disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 255, 136, 0.4);
+.step {
+  font-size: 14px;
+  color: #ddd;
+  line-height: 1.4;
 }
 
-.capture-button.stop {
-  background: linear-gradient(45deg, #ff6b6b, #ff3838);
-  color: #fff;
-}
-
-.capture-button.stop:hover:not(.disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.4);
-}
-
-.capture-button.disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
+.command {
+  background: #2d3748;
+  color: #e2e8f0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 13px;
+  font-weight: bold;
+  border: 1px solid #4a5568;
+  word-break: break-all;
+  margin: 4px 0;
+  text-align: center;
 }
 
 .capture-status {
   display: flex;
   align-items: center;
+  justify-content: center;
 }
 
 .status-text {
-  font-size: 1rem;
   font-weight: bold;
-  padding: 4px 8px;
-  border-radius: 4px;
+  font-size: 18px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
 }
 
-.status-text.capturing {
-  color: #ff6b6b;
-  background: rgba(255, 107, 107, 0.1);
+.status-text.connected {
+  color: #00ff88;
+  background: rgba(0, 255, 136, 0.1);
+  border: 1px solid rgba(0, 255, 136, 0.3);
 }
 
-.status-text.idle {
-  color: #888;
-  background: rgba(136, 136, 136, 0.1);
-}
-
-.status-text.starting,
-.status-text.stopping {
+.status-text.disconnected {
   color: #ffa500;
   background: rgba(255, 165, 0, 0.1);
-}
-
-.status-text.error {
-  color: #ff6b6b;
-  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 165, 0, 0.3);
 }
 
 .dashboard {

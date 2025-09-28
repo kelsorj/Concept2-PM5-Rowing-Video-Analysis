@@ -7,8 +7,7 @@ function App() {
   const [rowingData, setRowingData] = useState([]);
   const [latestMetrics, setLatestMetrics] = useState({});
   const [isConnected, setIsConnected] = useState(false);
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [captureStatus, setCaptureStatus] = useState('idle');
+  const [captureStatus, setCaptureStatus] = useState('disconnected');
 
   // Sample data for testing
   const sampleData = [
@@ -92,68 +91,6 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Function to start BLE capture
-  const startCapture = async () => {
-    try {
-      setCaptureStatus('starting');
-      const response = await fetch('http://localhost:3001/api/start-capture', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      const result = await response.json();
-      if (result.success) {
-        setCaptureStatus('capturing');
-        setIsCapturing(true);
-      } else {
-        setCaptureStatus('error');
-
-        // Check if it's the manual USB instruction
-        if (result.message.includes('Please run the USB capture script manually')) {
-          alert('USB Setup Required: Please run this command in a separate terminal:\n\nsudo ./rowing_env/bin/python3 enhanced_usb_c2.py\n\nThen refresh this dashboard to see live rowing data!');
-          setCaptureStatus('ready');
-        } else {
-          alert('Failed to start capture: ' + result.message);
-        }
-      }
-    } catch (error) {
-      console.error('Error starting capture:', error);
-      setCaptureStatus('error');
-
-      // Check if it's a USB permission error
-      if (error.message.includes('USB') || error.message.includes('sudo')) {
-        alert('USB Permission Required: Please run the USB script manually with sudo:\n\nsudo -E ./rowing_env/bin/python3 enhanced_usb_c2.py\n\nOr use the helper script: ./start_usb_capture.sh');
-      } else {
-        alert('Error starting capture: ' + error.message);
-      }
-    }
-  };
-
-  // Function to stop BLE capture
-  const stopCapture = async () => {
-    try {
-      setCaptureStatus('stopping');
-      const response = await fetch('http://localhost:3001/api/stop-capture', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      const result = await response.json();
-      if (result.success) {
-        setCaptureStatus('idle');
-        setIsCapturing(false);
-      } else {
-        setCaptureStatus('error');
-        alert('Failed to stop capture: ' + result.message);
-      }
-    } catch (error) {
-      console.error('Error stopping capture:', error);
-      setCaptureStatus('error');
-      alert('Error stopping capture: ' + error.message);
-    }
-  };
 
   const formatTime = (date) => {
     return date.toLocaleTimeString('en-US', { 
@@ -198,7 +135,7 @@ function App() {
               <div className="instruction-steps">
                 <div className="step">1. Connect PM5 via USB cable</div>
                 <div className="step">2. Run in separate terminal:</div>
-                <div className="command">sudo ./rowing_env/bin/python3 enhanced_usb_c2.py</div>
+                <div className="command">sudo ./rowing_env/bin/python3 enhanced_usb_c2_hid.py</div>
                 <div className="step">3. Start rowing - data appears automatically!</div>
               </div>
             </div>

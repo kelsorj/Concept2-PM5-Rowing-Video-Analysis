@@ -58,14 +58,13 @@ Navigate to `http://localhost:3001` in your browser.
 ### Quick Start (USB Method)
 1. **Connect PM5**: Use USB cable from PM5 to computer (square USB-B port on PM5)
 2. **Open Dashboard**: Navigate to `http://localhost:3001` in your browser
-3. **Click "Start Capture"**: Follow the popup instructions
-4. **Run USB Script**: In a separate terminal, run:
+3. **Run Capture Script**: In a separate terminal, run:
    ```bash
-   sudo ./rowing_env/bin/python3 enhanced_usb_c2.py
+   ./start_rowing_capture.sh
    ```
-5. **Start rowing** on your Concept2 PM5 with "Just Row" mode
-6. **Monitor real-time data** as you row (including force curves!)
-7. **Stop the script** with Ctrl+C when finished
+4. **Start rowing** on your Concept2 PM5 with "Just Row" mode
+5. **Monitor real-time data** as you row (including force curves!)
+6. **Stop the script** with Ctrl+C when finished
 
 ### Manual Usage (if needed)
 If you prefer running scripts manually:

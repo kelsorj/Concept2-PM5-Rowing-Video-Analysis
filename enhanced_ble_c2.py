@@ -130,7 +130,20 @@ def parse_extra1(b: bytes):
         # Sanity check: rowing power shouldn't exceed 1000W
         if peak_power_val <= 1000:
             out["peak_power_w"] = peak_power_val
-    
+
+    # Force curve data (variable length after peak power)
+    if len(b) > 19:
+        force_data = []
+        for i in range(19, len(b), 2):
+            if i + 1 < len(b):
+                force_val = u16le(b, i)
+                # Only include reasonable force values
+                if 0 <= force_val <= 2000:  # Typical rowing force range
+                    force_data.append(force_val)
+        if force_data:
+            out["force_curve"] = force_data
+            print(f"DEBUG: Captured force curve with {len(force_data)} points: {force_data[:10]}...")
+
     return out
 
 def parse_extra2(b: bytes):
