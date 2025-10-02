@@ -1,3 +1,6 @@
 *.csv
 node_modules
 logs/*.log
+advanced_analysis/*.txt
+.gitignore
+advanced_analysis/*.mp4

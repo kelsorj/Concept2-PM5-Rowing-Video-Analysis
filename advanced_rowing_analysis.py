@@ -1199,6 +1199,47 @@ class AdvancedRowingAnalyzer:
         if ang_right_hip is not None:
             draw_badge(rh, f"{ang_right_hip:.0f}", (200, 200, 200), draw_deg=True)
 
+        # Ankle dorsiflexion/plantarflexion approximation:
+        # angle between shank (knee->ankle) and a vertical reference line through the ankle
+        def draw_vertical_dotted(p_start, length=110, color=(180, 180, 180)):
+            if p_start is None:
+                return None
+            x, y = p_start
+            y2 = max(0, y - length)
+            # dotted vertical line
+            for t in range(y2, y, 8):
+                cv2.line(frame, (x, t), (x, min(y, t+4)), color, 2)
+            return (x, y2)
+
+        # Left ankle angle (signed relative to vertical): positive when knee is forward (to the right)
+        if la is not None and lk is not None:
+            top = draw_vertical_dotted(la)
+            if top is not None:
+                # Signed angle using reference vector up (vertical) and shank vector
+                v_ref = np.array([0.0, -1.0], dtype=np.float32)  # up
+                v_shank = np.array([lk[0] - la[0], lk[1] - la[1]], dtype=np.float32)
+                n = np.linalg.norm(v_shank)
+                if n > 0:
+                    v_shank /= n
+                    cross_z = v_ref[0]*v_shank[1] - v_ref[1]*v_shank[0]
+                    dot = v_ref[0]*v_shank[0] + v_ref[1]*v_shank[1]
+                    signed_deg = float(np.degrees(np.arctan2(cross_z, dot)))
+                    draw_badge(la, f"{signed_deg:.0f}", (255, 255, 0), draw_deg=True)
+
+        # Right ankle angle (signed relative to vertical): positive when knee is forward (to the right)
+        if ra is not None and rk is not None:
+            top = draw_vertical_dotted(ra)
+            if top is not None:
+                v_ref = np.array([0.0, -1.0], dtype=np.float32)
+                v_shank = np.array([rk[0] - ra[0], rk[1] - ra[1]], dtype=np.float32)
+                n = np.linalg.norm(v_shank)
+                if n > 0:
+                    v_shank /= n
+                    cross_z = v_ref[0]*v_shank[1] - v_ref[1]*v_shank[0]
+                    dot = v_ref[0]*v_shank[0] + v_ref[1]*v_shank[1]
+                    signed_deg = float(np.degrees(np.arctan2(cross_z, dot)))
+                    draw_badge(ra, f"{signed_deg:.0f}", (255, 255, 0), draw_deg=True)
+
         # Torso lean badge near midpoint between shoulders
         if ls is not None and rs is not None and lh is not None and rh is not None:
             shoulder_center = (int((ls[0] + rs[0]) / 2), int((ls[1] + rs[1]) / 2))

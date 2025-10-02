@@ -13,6 +13,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 import glob
 import os
 from datetime import datetime
+import re
 
 def load_force_data():
     """Load the most recent force data"""
@@ -38,13 +39,34 @@ def load_force_data():
                             'force_curve': force_curve,
                             'power': int(row['avg_power_w']),
                             'spm': int(row['spm']),
-                            'distance': float(row['distance_m'])
+                            'distance': float(row['distance_m']),
+                            'timestamp_iso': row.get('timestamp_iso'),
+                            'timestamp_dt': datetime.fromisoformat(row['timestamp_iso']) if row.get('timestamp_iso') else None
                         })
                 except (json.JSONDecodeError, KeyError):
                     continue
     
     print(f"   Found {len(force_data)} complete force curves")
     return force_data
+
+def parse_clip_window_from_filename(video_path, base_date):
+    """Parse HHMMSS-HHMMSS from video filename and return absolute start/end datetimes.
+    base_date should be a date (from force data) to anchor the times.
+    """
+    name = os.path.basename(video_path)
+    m = re.search(r"(\d{6})-(\d{6})", name)
+    if not m:
+        return None, None
+    start_hhmmss, end_hhmmss = m.group(1), m.group(2)
+    def to_dt(hhmmss):
+        hh = int(hhmmss[0:2]); mm = int(hhmmss[2:4]); ss = int(hhmmss[4:6])
+        return datetime(base_date.year, base_date.month, base_date.day, hh, mm, ss)
+    start_dt = to_dt(start_hhmmss)
+    end_dt = to_dt(end_hhmmss)
+    # Handle potential day rollover (end before start)
+    if end_dt < start_dt:
+        end_dt = end_dt.replace(day=end_dt.day + 1)
+    return start_dt, end_dt
 
 def load_pose_data():
     """Load the most recent pose data"""
@@ -68,7 +90,9 @@ def find_closest_force_data(pose_elapsed_s, force_data, time_window=2.0):
     min_time_diff = float('inf')
     
     for force_entry in force_data:
-        time_diff = abs(pose_elapsed_s - force_entry['elapsed_s'])
+        # Prefer clip-adjusted elapsed time when available
+        force_time = force_entry.get('clip_elapsed_s', force_entry.get('elapsed_s', 0.0))
+        time_diff = abs(pose_elapsed_s - force_time)
         
         if time_diff < time_window and time_diff < min_time_diff:
             min_time_diff = time_diff
@@ -209,6 +233,21 @@ def overlay_data_on_video():
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
     print(f"   Video: {width}x{height} @ {fps}fps, {total_frames} frames")
+
+    # If possible, filter and align force data to the video clip window based on filename times
+    if force_data and force_data[0].get('timestamp_dt') is not None:
+        base_date = force_data[0]['timestamp_dt'].date()
+        clip_start_dt, clip_end_dt = parse_clip_window_from_filename(video_path, base_date)
+        if clip_start_dt and clip_end_dt:
+            filtered = []
+            for entry in force_data:
+                ts = entry.get('timestamp_dt')
+                if ts and clip_start_dt <= ts <= clip_end_dt:
+                    entry['clip_elapsed_s'] = (ts - clip_start_dt).total_seconds()
+                    filtered.append(entry)
+            if filtered:
+                print(f"   Filtering force data to clip window: {len(filtered)} entries")
+                force_data = filtered
     
     # Create output video
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -278,7 +317,8 @@ def overlay_data_on_video():
                           angle_x_offset:angle_x_offset+angle_width] = angle_display
                 
                 # Add time and correlation info
-                time_text = f"Time: {pose_elapsed_s:.1f}s | Force: {closest_force['elapsed_s']:.1f}s | Diff: {time_diff:.2f}s"
+                force_time_display = closest_force.get('clip_elapsed_s', closest_force.get('elapsed_s', 0.0))
+                time_text = f"Time: {pose_elapsed_s:.1f}s | Force: {force_time_display:.1f}s | Diff: {time_diff:.2f}s"
                 cv2.putText(frame, time_text, (10, height - 20), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         

@@ -1,7 +1,7 @@
 🚣‍♂️ COMPREHENSIVE ROWING ANALYSIS REPORT
 ============================================================
 
-Analysis Date: 2025-10-01 21:05:26
+Analysis Date: 2025-10-01 21:16:44
 Total Frames Analyzed: 1278
 
 JOINT KINEMATICS ANALYSIS
