@@ -1,0 +1,13 @@
+🚣‍♂️ PROFESSIONAL ROWING ANALYSIS REPORT
+============================================================
+
+Analysis Date: 2025-10-01 19:01:23
+Total Stroke Cycles Analyzed: 0
+
+FORCE ANALYSIS
+----------------------------------------
+Average Power: 235.4W
+Maximum Power: 292.0W
+Power Standard Deviation: 55.3W
+Power Consistency: 76.5%
+

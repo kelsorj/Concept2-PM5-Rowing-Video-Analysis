@@ -1,0 +1,77 @@
+🚣‍♂️ COMPREHENSIVE ROWING ANALYSIS REPORT
+============================================================
+
+Analysis Date: 2025-10-01 21:05:26
+Total Frames Analyzed: 1278
+
+JOINT KINEMATICS ANALYSIS
+----------------------------------------
+
+LEFT_ARM JOINT:
+  Range of Motion: 136.5°
+  Mean Angle: 139.8°
+  Angular Velocity: 4.75°/frame
+  Angle Range: 40.5° - 177.0°
+
+RIGHT_ARM JOINT:
+  Range of Motion: 154.4°
+  Mean Angle: 132.9°
+  Angular Velocity: 4.44°/frame
+  Angle Range: 23.4° - 177.8°
+
+LEFT_LEG JOINT:
+  Range of Motion: 149.6°
+  Mean Angle: 126.1°
+  Angular Velocity: 3.57°/frame
+  Angle Range: 30.4° - 180.0°
+
+RIGHT_LEG JOINT:
+  Range of Motion: 141.7°
+  Mean Angle: 128.0°
+  Angular Velocity: 3.26°/frame
+  Angle Range: 38.3° - 180.0°
+
+TORSO JOINT:
+  Range of Motion: 359.9°
+  Mean Angle: -22.0°
+  Angular Velocity: 9.32°/frame
+  Angle Range: -180.0° - 179.9°
+
+SYMMETRY ANALYSIS
+----------------------------------------
+Overall Symmetry Score: 95.0%
+
+Arm Symmetry:
+  Mean Difference: 6.9°
+  Correlation: 0.963
+  Symmetry Index: 92.8%
+
+Leg Symmetry:
+  Mean Difference: -1.9°
+  Correlation: 0.999
+  Symmetry Index: 97.2%
+
+TIMING ANALYSIS
+----------------------------------------
+Stroke Rate: 20.7 spm
+Stroke Duration: 2.90 seconds
+Rhythm Consistency: 67.7%
+Drive Ratio: 50.00%
+Recovery Ratio: 50.00%
+
+TECHNIQUE QUALITY ASSESSMENT
+----------------------------------------
+Overall Technique Score: 42.2%
+Arm ROM Score: 100.0%
+Leg ROM Score: 100.0%
+Arm Smoothness: -55.4%
+Leg Smoothness: 11.0%
+
+FORCE ANALYSIS
+----------------------------------------
+Average Power: 235.4W
+Maximum Power: 292.0W
+Power Consistency: 76.5%
+Average Peak Force: 222.6
+Maximum Peak Force: 248.0
+Force Consistency: 83.3%

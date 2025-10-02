@@ -162,13 +162,8 @@ function App() {
 
           <div className="capture-controls">
             <div className="usb-instructions">
-              <div className="instruction-header">🚀 To Start Rowing Data Capture:</div>
-              <div className="instruction-steps">
-                <div className="step">1. Connect PM5 via USB cable (square USB-B port)</div>
-                <div className="step">2. Run in separate terminal:</div>
-                <div className="command">sudo ./rowing_env/bin/python3 py3row_usb_capture.py</div>
-                <div className="step">3. Start rowing - data appears automatically!</div>
-              </div>
+              <div className="command">./start_force_capture.sh</div>
+              <div className="note">Force data requires USB + sudo</div>
             </div>
             <div className="capture-status">
               <span className={`status-text ${connectionStatus}`}>

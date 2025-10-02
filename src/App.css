@@ -41,11 +41,12 @@
 }
 
 .clock-time {
-  font-size: 4rem;
+  font-size: 6rem;
   font-family: 'Courier New', monospace;
   font-weight: bold;
   color: #00ff88;
-  text-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
+  text-shadow: 0 0 30px rgba(0, 255, 136, 0.7);
+  line-height: 1;
 }
 
 .connection-status {
@@ -90,42 +91,29 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   padding: 16px;
-  max-width: 500px;
   backdrop-filter: blur(10px);
-}
-
-.instruction-header {
-  font-size: 18px;
-  font-weight: bold;
-  color: #00ff88;
-  margin-bottom: 12px;
-  text-align: center;
-}
-
-.instruction-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.step {
-  font-size: 14px;
-  color: #ddd;
-  line-height: 1.4;
 }
 
 .command {
   background: #2d3748;
   color: #e2e8f0;
-  padding: 8px 12px;
-  border-radius: 6px;
+  padding: 12px 16px;
+  border-radius: 8px;
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: bold;
   border: 1px solid #4a5568;
   word-break: break-all;
-  margin: 4px 0;
   text-align: center;
+  white-space: nowrap;
+  margin-bottom: 8px;
+}
+
+.note {
+  font-size: 12px;
+  color: #888;
+  text-align: center;
+  font-style: italic;
 }
 
 .capture-status {
@@ -230,7 +218,7 @@
   }
 
   .clock-time {
-    font-size: 3rem;
+    font-size: 4.5rem;
   }
 
   .clock-container {
