@@ -28,6 +28,7 @@ class AdvancedRowingAnalyzer:
         self.force_data = None
         self.analysis_results = {}
         self.plot_scale = 0.75
+        self.time_offset_s = 0.0
         
     def load_data(self):
         """Load pose and force data"""
@@ -859,6 +860,9 @@ class AdvancedRowingAnalyzer:
                 # If we have video absolute start time and force timestamps, compute absolute frame time
                 if video_start_dt is not None:
                     frame_abs_dt = video_start_dt + timedelta(seconds=(frame_count - 1) / max(1, fps))
+                    # Apply user-provided constant offset for sync
+                    if getattr(self, 'time_offset_s', 0.0) != 0.0:
+                        frame_abs_dt = frame_abs_dt + timedelta(seconds=self.time_offset_s)
                     # Replace elapsed to clip-relative seconds using force clip start when known
                     # Find clip start from first filtered force entry
                     if self.force_data and self.force_data[0].get('clip_elapsed_s') is not None and self.force_data[0].get('timestamp_dt') is not None:
@@ -1405,6 +1409,10 @@ def main():
     parser = argparse.ArgumentParser(description="Advanced Rowing Analysis")
     parser.add_argument("--mode", choices=["full", "overlay_only"], default="full",
                         help="Run full pipeline or only generate overlay video")
+    parser.add_argument("--time-offset-ms", type=float, default=0.0,
+                        help="Apply a constant time offset (ms) to video frame timestamps for sync")
+    parser.add_argument("--plot-scale", type=float, default=0.75,
+                        help="Scale factor for the force plot size (e.g., 0.75)")
     args = parser.parse_args()
 
     print("🚣‍♂️ Advanced Rowing Analysis System")
@@ -1412,6 +1420,8 @@ def main():
     
     # Initialize analyzer
     analyzer = AdvancedRowingAnalyzer()
+    analyzer.time_offset_s = float(args.time_offset_ms) / 1000.0
+    analyzer.plot_scale = float(args.plot_scale)
     
     # Load data
     if not analyzer.load_data():
