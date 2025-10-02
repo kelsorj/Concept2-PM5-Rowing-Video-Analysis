@@ -10,7 +10,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from datetime import datetime
+from datetime import datetime, timedelta
+import re
 import glob
 import os
 from scipy import signal
@@ -19,12 +20,14 @@ import cv2
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import warnings
 warnings.filterwarnings('ignore')
+import argparse
 
 class AdvancedRowingAnalyzer:
     def __init__(self):
         self.pose_data = None
         self.force_data = None
         self.analysis_results = {}
+        self.plot_scale = 0.75
         
     def load_data(self):
         """Load pose and force data"""
@@ -58,7 +61,9 @@ class AdvancedRowingAnalyzer:
                                 'force_curve': force_curve,
                                 'power': row['avg_power_w'],
                                 'spm': row['spm'],
-                                'distance': row['distance_m']
+                                'distance': row['distance_m'],
+                                'timestamp_iso': row.get('timestamp_iso'),
+                                'timestamp_dt': datetime.fromisoformat(row['timestamp_iso']) if pd.notna(row.get('timestamp_iso')) else None
                             })
                     except (json.JSONDecodeError, KeyError):
                         continue
@@ -806,6 +811,25 @@ class AdvancedRowingAnalyzer:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
         print(f"   Video: {width}x{height} @ {fps}fps, {total_frames} frames")
+
+        # Derive absolute start time from filename when available (HHMMSS-HHMMSS)
+        video_start_dt = None
+        m = re.search(r"(\d{6})-(\d{6})", os.path.basename(video_path))
+        if m:
+            hhmmss = m.group(1)
+            # Anchor to date from force data if available
+            base_dt = None
+            if self.force_data and self.force_data[0].get('timestamp_dt') is not None:
+                base_dt = self.force_data[0]['timestamp_dt']
+            if base_dt is None and self.force_data:
+                # fall back to now if timestamps missing
+                base_dt = datetime.now()
+            if base_dt is not None:
+                h = int(hhmmss[0:2]); mi = int(hhmmss[2:4]); s = int(hhmmss[4:6])
+                video_start_dt = datetime(base_dt.year, base_dt.month, base_dt.day, h, mi, s)
+
+        # If filename has a clip time window, filter force data to that window and align times
+        self._compute_clip_window_and_filter_force(video_path)
         
         # Create output video
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -818,6 +842,7 @@ class AdvancedRowingAnalyzer:
         
         frame_count = 0
         overlays_added = 0
+        power_overlays = 0
         
         while cap.isOpened():
             ret, frame = cap.read()
@@ -829,13 +854,26 @@ class AdvancedRowingAnalyzer:
             # Get pose data for this frame
             if frame_count <= len(self.pose_data):
                 pose_frame = self.pose_data[frame_count - 1]
-                elapsed_s = pose_frame.get('timestamp', 0)
+                # Base elapsed time from pose export
+                elapsed_s = float(pose_frame.get('timestamp', 0))
+                # If we have video absolute start time and force timestamps, compute absolute frame time
+                if video_start_dt is not None:
+                    frame_abs_dt = video_start_dt + timedelta(seconds=(frame_count - 1) / max(1, fps))
+                    # Replace elapsed to clip-relative seconds using force clip start when known
+                    # Find clip start from first filtered force entry
+                    if self.force_data and self.force_data[0].get('clip_elapsed_s') is not None and self.force_data[0].get('timestamp_dt') is not None:
+                        clip_start_dt = self.force_data[0]['timestamp_dt'] - timedelta(seconds=self.force_data[0]['clip_elapsed_s'])
+                        elapsed_s = (frame_abs_dt - clip_start_dt).total_seconds()
                 
                 # Create joint angles display
                 angles_display = self._create_joint_angles_display(pose_frame, frame_count, elapsed_s)
                 
                 # Create power curve display (if available)
-                power_display = self._create_power_curve_display(elapsed_s)
+                # Compute absolute frame datetime if we know video start
+                frame_abs_dt = None
+                if 'video_start_dt' in locals() and video_start_dt is not None:
+                    frame_abs_dt = video_start_dt + timedelta(seconds=(frame_count - 1) / max(1, fps))
+                power_display = self._create_power_curve_display(elapsed_s, frame_abs_dt)
                 
                 # Create analysis summary display
                 summary_display = self._create_analysis_summary_display(pose_frame, elapsed_s)
@@ -849,7 +887,12 @@ class AdvancedRowingAnalyzer:
                     overlays_added += 1
                 
                 if power_display is not None:
-                    self._overlay_display(frame, power_display, width - 400, 10)
+                    ph, pw = power_display.shape[:2]
+                    px = max(0, width - pw - 10)
+                    py = 10
+                    if px + pw <= width and py + ph <= height:
+                        self._overlay_display(frame, power_display, px, py)
+                        power_overlays += 1
                 
                 if summary_display is not None:
                     self._overlay_display(frame, summary_display, 10, height - 200)
@@ -876,6 +919,7 @@ class AdvancedRowingAnalyzer:
         print(f"   📊 Total frames: {frame_count}")
         print(f"   📈 Overlays added: {overlays_added}")
         print(f"   📊 Overlay rate: {(overlays_added/frame_count)*100:.1f}%")
+        print(f"   🔋 Power plot overlays: {power_overlays}")
     
     def _create_joint_angles_display(self, pose_frame, frame_num, elapsed_s):
         """Create joint angles display overlay"""
@@ -946,67 +990,109 @@ class AdvancedRowingAnalyzer:
         
         return img
     
-    def _create_power_curve_display(self, elapsed_s):
+    def _create_power_curve_display(self, elapsed_s, frame_abs_dt=None):
         """Create power curve display overlay"""
         if not self.force_data:
             return None
         
         # Find closest force data
         closest_force = None
+        closest_idx = -1
         min_time_diff = float('inf')
         
-        for force_entry in self.force_data:
-            time_diff = abs(elapsed_s - force_entry['elapsed_s'])
-            if time_diff < 5.0 and time_diff < min_time_diff:  # Within 5 seconds
+        for idx, force_entry in enumerate(self.force_data):
+            t = force_entry.get('clip_elapsed_s', force_entry.get('elapsed_s', 0.0))
+            time_diff = abs(elapsed_s - t)
+            if time_diff < 8.0 and time_diff < min_time_diff:  # Within 8 seconds
                 min_time_diff = time_diff
                 closest_force = force_entry
+                closest_idx = idx
         
         if not closest_force or not closest_force['force_curve']:
             return None
-        
-        # Create matplotlib plot
-        fig, ax = plt.subplots(figsize=(4, 3), dpi=100)
+
+        # Compute animated position along the stroke by placing current time
+        # between the current stroke timestamp and its neighbor (prev/next)
+        t_curr = elapsed_s
+        def ts_at(i):
+            e = self.force_data[i]
+            return e.get('clip_elapsed_s', e.get('elapsed_s', 0.0))
+        t0 = ts_at(closest_idx)
+        # Choose segment for interpolation
+        if t_curr >= t0 and closest_idx + 1 < len(self.force_data):
+            t1 = ts_at(closest_idx + 1)
+            denom = max(1e-3, (t1 - t0))
+            phase = (t_curr - t0) / denom
+        elif t_curr < t0 and closest_idx - 1 >= 0:
+            t_prev = ts_at(closest_idx - 1)
+            denom = max(1e-3, (t0 - t_prev))
+            phase = (t_curr - t_prev) / denom
+        else:
+            phase = 0.0
+        phase = float(np.clip(phase, 0.0, 1.0))
+
+        # Map phase to an index along the force curve samples
+        num_pts = len(closest_force['force_curve'])
+        current_idx = int(np.clip(round(phase * (num_pts - 1)), 0, num_pts - 1))
+
+        # Delegate to the overlay-style plot for identical look and metadata, with animated dot
+        force_curve = closest_force['force_curve']
+        spm = closest_force.get('spm')
+        distance = closest_force.get('distance')
+        plot_elapsed = closest_force.get('clip_elapsed_s', closest_force.get('elapsed_s', 0.0))
+        return self._create_force_curve_plot(force_curve, closest_force['power'], spm, distance, plot_elapsed, current_idx, frame_abs_dt)
+
+    def _create_force_curve_plot(self, force_curve, power, spm, distance, elapsed_s, current_idx=None, frame_abs_dt=None):
+        """Create a matplotlib plot of the force curve (parity with overlay_force_angles_video)."""
+        if not force_curve:
+            return None
+
+        base_w, base_h = 4, 3
+        scale = float(getattr(self, 'plot_scale', 1.0))
+        fig, ax = plt.subplots(figsize=(base_w * scale, base_h * scale), dpi=100)
         fig.patch.set_facecolor('black')
         ax.set_facecolor('black')
-        
-        # Plot force curve
-        force_curve = closest_force['force_curve']
+
         x = np.arange(len(force_curve))
         ax.plot(x, force_curve, 'lime', linewidth=3, label='Force')
-        
-        # Highlight peak
-        peak_idx = np.argmax(force_curve)
-        peak_force = force_curve[peak_idx]
-        ax.plot(peak_idx, peak_force, 'ro', markersize=8)
-        ax.annotate(f'{peak_force}', (peak_idx, peak_force), 
-                    xytext=(5, 5), textcoords='offset points',
-                    color='white', fontsize=10, fontweight='bold')
-        
-        # Customize plot
+
+        # Animated dot at current index; fall back to peak if not provided
+        if current_idx is None:
+            current_idx = int(np.argmax(force_curve))
+        current_idx = int(np.clip(current_idx, 0, len(force_curve) - 1))
+        current_force = float(force_curve[current_idx])
+        ax.plot(current_idx, current_force, 'ro', markersize=8)
+
         ax.set_xlabel('Stroke Position', color='white', fontsize=10)
         ax.set_ylabel('Force', color='white', fontsize=10)
-        ax.set_title(f'Force Curve - {closest_force["power"]}W', color='white', fontsize=12)
+        # Include SPM in title to match original overlay
+        spm_text = f", {int(spm)}spm" if spm is not None else ""
+        ax.set_title(f'Force Curve - {int(power)}W{spm_text}', color='white', fontsize=int(12 * scale))
         ax.grid(True, alpha=0.3, color='gray')
-        ax.tick_params(colors='white', labelsize=8)
-        
-        # Add stats text
-        stats_text = f'Peak: {peak_force}\nAvg: {np.mean(force_curve):.1f}\nPower: {closest_force["power"]}W'
-        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
-                verticalalignment='top', color='white', fontsize=9,
+        ax.tick_params(colors='white', labelsize=int(8 * scale))
+
+        peak_force_val = int(np.max(force_curve))
+        stats = f'Peak: {peak_force_val}\nAvg: {np.mean(force_curve):.1f}'
+        if distance is not None:
+            stats += f'\nDist: {float(distance):.1f}m'
+        ax.text(0.02, 0.98, stats, transform=ax.transAxes,
+                verticalalignment='top', color='white', fontsize=int(9 * scale),
                 bbox=dict(boxstyle='round', facecolor='black', alpha=0.8))
-        
+
+        # Timestamp label for troubleshooting
+        if frame_abs_dt is not None:
+            ts_text = frame_abs_dt.strftime('%H:%M:%S.%f')[:-3]
+            ax.text(0.70, 0.02, ts_text, transform=ax.transAxes,
+                    verticalalignment='bottom', color='white', fontsize=int(10 * scale),
+                    bbox=dict(boxstyle='round', facecolor='black', alpha=0.6))
+
         plt.tight_layout()
-        
-        # Convert to image
         canvas = FigureCanvasAgg(fig)
         canvas.draw()
         buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8)
         buf = buf.reshape(canvas.get_width_height()[::-1] + (4,))
-        buf = buf[:, :, :3]  # Remove alpha channel
-        
+        buf = buf[:, :, :3]
         plt.close(fig)
-        
-        # Convert RGB to BGR for OpenCV
         return cv2.cvtColor(buf, cv2.COLOR_RGB2BGR)
     
     def _create_analysis_summary_display(self, pose_frame, elapsed_s):
@@ -1053,7 +1139,8 @@ class AdvancedRowingAnalyzer:
             # Find current power
             current_power = 0
             for force_entry in self.force_data:
-                if abs(elapsed_s - force_entry['elapsed_s']) < 2.0:
+                t = force_entry.get('clip_elapsed_s', force_entry.get('elapsed_s', 0.0))
+                if abs(elapsed_s - t) < 5.0:
                     current_power = force_entry['power']
                     break
             
@@ -1074,6 +1161,39 @@ class AdvancedRowingAnalyzer:
         if (x_offset + display_width <= frame_width and 
             y_offset + display_height <= frame_height):
             frame[y_offset:y_offset+display_height, x_offset:x_offset+display_width] = display
+
+    def _compute_clip_window_and_filter_force(self, video_path):
+        """If the video filename contains HHMMSS-HHMMSS, filter force data to that absolute window
+        and store clip-relative elapsed seconds as 'clip_elapsed_s'."""
+        if not self.force_data:
+            return
+        # Determine base date from first available force timestamp
+        first_dt = None
+        for e in self.force_data:
+            if e.get('timestamp_dt') is not None:
+                first_dt = e['timestamp_dt']
+                break
+        if first_dt is None:
+            return
+        m = re.search(r"(\d{6})-(\d{6})", os.path.basename(video_path))
+        if not m:
+            return
+        start_hhmmss, end_hhmmss = m.group(1), m.group(2)
+        def to_dt(hhmmss):
+            hh = int(hhmmss[0:2]); mm = int(hhmmss[2:4]); ss = int(hhmmss[4:6])
+            return datetime(first_dt.year, first_dt.month, first_dt.day, hh, mm, ss)
+        start_dt = to_dt(start_hhmmss)
+        end_dt = to_dt(end_hhmmss)
+        if end_dt < start_dt:
+            end_dt = end_dt.replace(day=end_dt.day + 1)
+        filtered = []
+        for e in self.force_data:
+            ts = e.get('timestamp_dt')
+            if ts and start_dt <= ts <= end_dt:
+                e['clip_elapsed_s'] = (ts - start_dt).total_seconds()
+                filtered.append(e)
+        if filtered:
+            self.force_data = filtered
 
     def _draw_joint_angles_on_frame(self, frame, pose_frame):
         """Draw angles at the elbow, knee, hip (and torso lean) directly on the video frame.
@@ -1240,6 +1360,36 @@ class AdvancedRowingAnalyzer:
                     signed_deg = float(np.degrees(np.arctan2(cross_z, dot)))
                     draw_badge(ra, f"{signed_deg:.0f}", (255, 255, 0), draw_deg=True)
 
+        # Thigh angle relative to vertical (hip->knee vs vertical), analogous to ankle logic
+        # Left thigh
+        if lh is not None and lk is not None:
+            top = draw_vertical_dotted(lh)
+            if top is not None:
+                v_ref = np.array([0.0, -1.0], dtype=np.float32)  # up
+                v_thigh = np.array([lk[0] - lh[0], lk[1] - lh[1]], dtype=np.float32)
+                n = np.linalg.norm(v_thigh)
+                if n > 0:
+                    v_thigh /= n
+                    cross_z = v_ref[0]*v_thigh[1] - v_ref[1]*v_thigh[0]
+                    dot = v_ref[0]*v_thigh[0] + v_ref[1]*v_thigh[1]
+                    signed_deg = float(np.degrees(np.arctan2(cross_z, dot)))
+                    # Use orange-ish badge for thigh
+                    draw_badge(lh, f"{signed_deg:.0f}", (0, 165, 255), draw_deg=True)
+
+        # Right thigh
+        if rh is not None and rk is not None:
+            top = draw_vertical_dotted(rh)
+            if top is not None:
+                v_ref = np.array([0.0, -1.0], dtype=np.float32)
+                v_thigh = np.array([rk[0] - rh[0], rk[1] - rh[1]], dtype=np.float32)
+                n = np.linalg.norm(v_thigh)
+                if n > 0:
+                    v_thigh /= n
+                    cross_z = v_ref[0]*v_thigh[1] - v_ref[1]*v_thigh[0]
+                    dot = v_ref[0]*v_thigh[0] + v_ref[1]*v_thigh[1]
+                    signed_deg = float(np.degrees(np.arctan2(cross_z, dot)))
+                    draw_badge(rh, f"{signed_deg:.0f}", (0, 165, 255), draw_deg=True)
+
         # Torso lean badge near midpoint between shoulders
         if ls is not None and rs is not None and lh is not None and rh is not None:
             shoulder_center = (int((ls[0] + rs[0]) / 2), int((ls[1] + rs[1]) / 2))
@@ -1251,7 +1401,12 @@ class AdvancedRowingAnalyzer:
                 draw_badge(shoulder_center, f"{torso_angle:.0f}", (0, 255, 128), draw_deg=True)
 
 def main():
-    """Main analysis function"""
+    """Main analysis function with CLI modes"""
+    parser = argparse.ArgumentParser(description="Advanced Rowing Analysis")
+    parser.add_argument("--mode", choices=["full", "overlay_only"], default="full",
+                        help="Run full pipeline or only generate overlay video")
+    args = parser.parse_args()
+
     print("🚣‍♂️ Advanced Rowing Analysis System")
     print("=" * 50)
     
@@ -1263,14 +1418,17 @@ def main():
         print("❌ Cannot proceed without data")
         return
     
-    # Perform analysis
-    analyzer.analyze_rowing_technique()
-    
-    # Create advanced report
-    analyzer.create_advanced_report()
-    
-    print("\n🎉 Advanced rowing analysis complete!")
-    print("📁 Check the 'advanced_analysis/' directory for results")
+    if args.mode == "overlay_only":
+        analyzer._create_analysis_video()
+    else:
+        # Perform analysis
+        analyzer.analyze_rowing_technique()
+        
+        # Create advanced report
+        analyzer.create_advanced_report()
+        
+        print("\n🎉 Advanced rowing analysis complete!")
+        print("📁 Check the 'advanced_analysis/' directory for results")
 
 if __name__ == "__main__":
     main()

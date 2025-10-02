@@ -140,8 +140,9 @@ def create_force_curve_plot(force_curve, power, spm, distance, elapsed_s):
     # Convert to image
     canvas = FigureCanvasAgg(fig)
     canvas.draw()
-    buf = np.frombuffer(canvas.tostring_rgb(), dtype=np.uint8)
-    buf = buf.reshape(canvas.get_width_height()[::-1] + (3,))
+    buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8)
+    buf = buf.reshape(canvas.get_width_height()[::-1] + (4,))
+    buf = buf[:, :, :3]
     
     plt.close(fig)
     
