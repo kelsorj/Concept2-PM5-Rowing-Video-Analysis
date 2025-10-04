@@ -9,6 +9,8 @@ import time
 import datetime
 import threading
 import queue
+import subprocess
+import tempfile
 
 import cv2
 
@@ -58,12 +60,36 @@ def main():
     width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps    = float(args.fps)
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out    = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
+    
+    # Create temporary directory for frame files
+    temp_dir = tempfile.mkdtemp(prefix="rowing_frames_")
+    print(f"📁 Using temporary directory: {temp_dir}")
+    
+    # FFmpeg command for video encoding with metadata
+    ffmpeg_cmd = [
+        'ffmpeg',
+        '-y',  # Overwrite output file
+        '-f', 'image2pipe',
+        '-vcodec', 'png',
+        '-r', str(fps),
+        '-i', '-',  # Read from stdin
+        '-c:v', 'libx264',
+        '-preset', 'fast',
+        '-crf', '23',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',  # Enable fast start for web playback
+        '-metadata', f'creation_time={start_wall.isoformat()}',
+        '-metadata', f'session_start={start_wall.isoformat()}',
+        video_path
+    ]
+    
+    # Start FFmpeg process
+    ffmpeg_process = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    print(f"🎥 FFmpeg process started for video encoding")
 
     # CSV writers
     f_frames = open(frames_csv_path, 'w', newline='')
-    frame_writer = csv.DictWriter(f_frames, fieldnames=["frame_idx","ts_ns","ts_iso"])
+    frame_writer = csv.DictWriter(f_frames, fieldnames=["frame_idx","ts_ns","ts_iso","frame_file"])
     frame_writer.writeheader()
 
     f_pm5 = open(pm5_csv_path, 'w', newline='')
@@ -115,6 +141,15 @@ def main():
         # Debug: Print when we get forceplot data
         if fp and len(fp) > 0:
             print(f"🎯 Forceplot data received: {len(fp)} samples, state={curr_stroke_state}, power={power}W, spm={spm}")
+        else:
+            # Print occasionally when no forceplot data (every 10th call to avoid spam)
+            if hasattr(update_erg_callback, 'call_count'):
+                update_erg_callback.call_count += 1
+            else:
+                update_erg_callback.call_count = 1
+            
+            if update_erg_callback.call_count % 10 == 0:
+                print(f"⏳ PM5 update #{update_erg_callback.call_count}: state={curr_stroke_state}, power={power}W, spm={spm}, forceplot_len={len(fp)}")
 
         # Accumulate forceplot across a stroke
         if fp and len(fp) > 0:
@@ -172,10 +207,27 @@ def main():
             ts_ns_off = now_ns() - start_ns
             ts_iso = ns_to_iso(ts_ns_off, start_wall)
 
-            # Burn-in timestamp (bottom-right)
+            # Burn-in timestamp (bottom-right) for visual reference
             cv2.putText(frame, ts_iso, (width - 320, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
-            out.write(frame)
-            frame_writer.writerow({"frame_idx": frame_idx, "ts_ns": ts_ns_off, "ts_iso": ts_iso}); f_frames.flush()
+            
+            # Add frame number and timestamp as text overlay for debugging
+            cv2.putText(frame, f"Frame: {frame_idx}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+            cv2.putText(frame, f"Offset: {ts_ns_off}ns", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+            
+            # Encode frame as PNG and send to FFmpeg
+            success, buffer = cv2.imencode('.png', frame)
+            if success:
+                ffmpeg_process.stdin.write(buffer.tobytes())
+                ffmpeg_process.stdin.flush()
+            
+            # Log frame data to CSV
+            frame_writer.writerow({
+                "frame_idx": frame_idx, 
+                "ts_ns": ts_ns_off, 
+                "ts_iso": ts_iso,
+                "frame_file": f"frame_{frame_idx:06d}.png"  # Reference to frame file
+            })
+            f_frames.flush()
             frame_idx += 1
 
             # Drain PM5 queue
@@ -210,8 +262,27 @@ def main():
     finally:
         stop_evt.set()
         ergman.stop()
-        cap.release(); out.release()
+        
+        # Close camera
+        cap.release()
+        
+        # Close FFmpeg process
+        if ffmpeg_process:
+            ffmpeg_process.stdin.close()
+            ffmpeg_process.wait()
+            print("🎥 FFmpeg encoding completed")
+        
+        # Close CSV files
         f_frames.close(); f_pm5.close(); f_raw.close()
+        
+        # Clean up temporary directory
+        try:
+            import shutil
+            shutil.rmtree(temp_dir)
+            print(f"🧹 Cleaned up temporary directory: {temp_dir}")
+        except Exception as e:
+            print(f"⚠️  Could not clean up temporary directory: {e}")
+        
         print("Saved:")
         print("  Folder:", session_dir)
         print("  Video:", video_path)
