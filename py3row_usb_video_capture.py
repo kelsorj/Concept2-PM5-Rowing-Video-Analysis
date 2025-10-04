@@ -49,6 +49,7 @@ def main():
     video_path = os.path.join(session_dir, f"{base}.mp4")
     frames_csv_path = os.path.join(session_dir, f"{base}_frames.csv")
     pm5_csv_path = os.path.join(session_dir, f"{base}_pm5.csv")
+    raw_csv_path = os.path.join(session_dir, f"{base}_raw.csv")
 
     # Open camera
     cap = cv2.VideoCapture(args.camera)
@@ -69,10 +70,15 @@ def main():
     pm_fields = [
         'ts_ns','ts_iso',
         'elapsed_s','distance_m','spm','power','pace','calhr','calories',
-        'strokestate','status','forceplot_json'
+        'strokestate','status','forceplot_current_json','forceplot_complete_json'
     ]
     pm_writer = csv.DictWriter(f_pm5, fieldnames=pm_fields)
     pm_writer.writeheader()
+
+    # Raw monitor JSON stream (one row per update)
+    f_raw = open(raw_csv_path, 'w', newline='')
+    raw_writer = csv.DictWriter(f_raw, fieldnames=['ts_ns','ts_iso','raw_json'])
+    raw_writer.writeheader()
 
     # Thread-safe queue for PM5 updates (avoid writing CSV in callback thread)
     pm_q = queue.Queue(maxsize=2048)
@@ -82,11 +88,16 @@ def main():
         'accum': [],
         'last_state': None,
         'stroke_idx': 0,
+        'last_nonempty_fp': [],
     }
+    fp_lock = threading.Lock()
+    stop_evt = threading.Event()
+    erg_ref = {'erg': None}
 
     def new_erg_callback(erg):
         ts_ns_off = now_ns() - start_ns
         print(f"✅ PM5 connected at {ns_to_iso(ts_ns_off, start_wall)}")
+        erg_ref['erg'] = erg
 
     def update_erg_callback(erg):
         # Called ~5 Hz by ErgManager
@@ -94,35 +105,61 @@ def main():
         ts_iso = ns_to_iso(ts_ns_off, start_wall)
         m = getattr(erg, 'data', {}) or {}
 
-        # Accumulate forceplot across a stroke
+        # Get forceplot data from monitor (ErgManager already calls get_monitor(forceplot=True))
+        # Match the working script approach exactly
         fp = m.get('forceplot', []) or []
-        if fp:
-            stroke_state['accum'].extend(fp)
-        curr = m.get('strokestate')
-        prev = stroke_state['last_state']
+        curr_stroke_state = m.get('strokestate', '')
+        power = m.get('power', 0)
+        spm = m.get('spm', 0)
+        
+        # Debug: Print when we get forceplot data
+        if fp and len(fp) > 0:
+            print(f"🎯 Forceplot data received: {len(fp)} samples, state={curr_stroke_state}, power={power}W, spm={spm}")
 
+        # Accumulate forceplot across a stroke
+        if fp and len(fp) > 0:
+            with fp_lock:
+                stroke_state['accum'].extend(fp)
+                stroke_state['last_nonempty_fp'] = fp
+
+        prev_stroke_state = stroke_state['last_state']
+
+        # Detect stroke completion (transition from Drive to Recovery) - match working script
         completed_forceplot = None
-        if prev == 'Drive' and curr == 'Recovery' and stroke_state['accum']:
-            stroke_state['stroke_idx'] += 1
-            completed_forceplot = stroke_state['accum'][:]
-            stroke_state['accum'].clear()
+        if (prev_stroke_state == 'Drive' and 
+            curr_stroke_state == 'Recovery' and 
+            stroke_state['accum']):
+            with fp_lock:
+                stroke_state['stroke_idx'] += 1
+                completed_forceplot = stroke_state['accum'][:]
+                print(f"🎯 Complete stroke #{stroke_state['stroke_idx']} captured: {len(completed_forceplot)} force points")
+                stroke_state['accum'].clear()
+                stroke_state['last_nonempty_fp'] = []
 
-        stroke_state['last_state'] = curr
+        stroke_state['last_state'] = curr_stroke_state
 
         pm_q.put({
             'ts_ns': ts_ns_off,
             'ts_iso': ts_iso,
             'm': m,
-            'forceplot_json': json.dumps(completed_forceplot) if completed_forceplot else ""
+            'forceplot_current_json': json.dumps(stroke_state.get('last_nonempty_fp') or fp) if (stroke_state.get('last_nonempty_fp') or fp) else "",
+            'forceplot_complete_json': json.dumps(completed_forceplot) if completed_forceplot else "",
+            'raw_json': json.dumps(m)
         })
 
     print("🔍 Scanning for PM5 devices...")
+    print("💡 TIP: Start a 'Just Row' workout on your PM5 to get forceplot data!")
+    print("💡 Forceplot data is only available during active rowing strokes.")
+    print("💡 If no forceplot data appears, try different workout modes or check PM5 firmware.")
     ergman = ErgManager(pyrow,
                         add_callback=new_erg_callback,
                         update_callback=update_erg_callback,
                         check_rate=1,
-                        update_rate=0.2)
+                        update_rate=0.2)  # Match working script: 5Hz updates
     print("✅ Py3Row ErgManager running. Recording… Press Ctrl+C to stop.")
+
+    # Simplified approach - rely on ErgManager's 5Hz updates like the working script
+    # No background poller needed - the working script doesn't use one
 
     frame_idx = 0
     try:
@@ -157,21 +194,30 @@ def main():
                     'calories': m.get('calories', 0),
                     'strokestate': m.get('strokestate', ''),
                     'status': m.get('status', ''),
-                    'forceplot_json': item['forceplot_json'],
+                    'forceplot_current_json': item['forceplot_current_json'],
+                    'forceplot_complete_json': item['forceplot_complete_json'],
                 }); f_pm5.flush()
+
+                raw_writer.writerow({
+                    'ts_ns': int(item['ts_ns']),
+                    'ts_iso': item['ts_iso'],
+                    'raw_json': item['raw_json'],
+                }); f_raw.flush()
 
             time.sleep(max(0.0, (1.0 / fps) - 0.001))
     except KeyboardInterrupt:
         print("\n⏹️  Stopping…")
     finally:
+        stop_evt.set()
         ergman.stop()
         cap.release(); out.release()
-        f_frames.close(); f_pm5.close()
+        f_frames.close(); f_pm5.close(); f_raw.close()
         print("Saved:")
         print("  Folder:", session_dir)
         print("  Video:", video_path)
         print("  Frames:", frames_csv_path)
         print("  PM5:", pm5_csv_path)
+        print("  Raw:", raw_csv_path)
 
 if __name__ == "__main__":
     main()
