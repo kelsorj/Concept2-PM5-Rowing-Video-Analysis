@@ -42,10 +42,13 @@ def main():
     start_wall = datetime.datetime.now()
     start_ns = now_ns()
 
-    # Outputs
-    video_path = f"{args.out_prefix}.mp4"
-    frames_csv_path = f"{args.out_prefix}_frames.csv"
-    pm5_csv_path = f"{args.out_prefix}_pm5.csv"
+    # Outputs in a dedicated folder named after the prefix
+    base = os.path.basename(args.out_prefix)
+    session_dir = args.out_prefix
+    os.makedirs(session_dir, exist_ok=True)
+    video_path = os.path.join(session_dir, f"{base}.mp4")
+    frames_csv_path = os.path.join(session_dir, f"{base}_frames.csv")
+    pm5_csv_path = os.path.join(session_dir, f"{base}_pm5.csv")
 
     # Open camera
     cap = cv2.VideoCapture(args.camera)
@@ -165,6 +168,7 @@ def main():
         cap.release(); out.release()
         f_frames.close(); f_pm5.close()
         print("Saved:")
+        print("  Folder:", session_dir)
         print("  Video:", video_path)
         print("  Frames:", frames_csv_path)
         print("  PM5:", pm5_csv_path)
