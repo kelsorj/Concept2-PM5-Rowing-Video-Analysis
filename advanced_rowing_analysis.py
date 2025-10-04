@@ -999,43 +999,31 @@ class AdvancedRowingAnalyzer:
         if not self.force_data:
             return None
         
-        # Find closest force data
-        closest_force = None
-        closest_idx = -1
-        min_time_diff = float('inf')
-        
-        for idx, force_entry in enumerate(self.force_data):
-            t = force_entry.get('clip_elapsed_s', force_entry.get('elapsed_s', 0.0))
-            time_diff = abs(elapsed_s - t)
-            if time_diff < 8.0 and time_diff < min_time_diff:  # Within 8 seconds
-                min_time_diff = time_diff
-                closest_force = force_entry
-                closest_idx = idx
-        
-        if not closest_force or not closest_force['force_curve']:
-            return None
-
-        # Compute animated position along the stroke by placing current time
-        # between the current stroke timestamp and its neighbor (prev/next)
-        t_curr = elapsed_s
+        # Use a bracketing-segment approach so we never show a static curve
         def ts_at(i):
             e = self.force_data[i]
             return e.get('clip_elapsed_s', e.get('elapsed_s', 0.0))
-        t0 = ts_at(closest_idx)
-        # Choose segment for interpolation
-        if t_curr >= t0 and closest_idx + 1 < len(self.force_data):
-            t1 = ts_at(closest_idx + 1)
-            denom = max(1e-3, (t1 - t0))
-            phase = (t_curr - t0) / denom
-        elif t_curr < t0 and closest_idx - 1 >= 0:
-            t_prev = ts_at(closest_idx - 1)
-            denom = max(1e-3, (t0 - t_prev))
-            phase = (t_curr - t_prev) / denom
+        n = len(self.force_data)
+        if n < 2:
+            return None
+        # Find the nearest index by time
+        closest_idx = int(np.argmin([abs(elapsed_s - ts_at(i)) for i in range(n)]))
+        t_curr = float(elapsed_s)
+        left_idx, right_idx = None, None
+        if t_curr >= ts_at(closest_idx) and closest_idx + 1 < n:
+            left_idx, right_idx = closest_idx, closest_idx + 1
+        elif t_curr < ts_at(closest_idx) and closest_idx - 1 >= 0:
+            left_idx, right_idx = closest_idx - 1, closest_idx
         else:
-            phase = 0.0
-        phase = float(np.clip(phase, 0.0, 1.0))
+            return None  # no valid segment yet; hide the plot
 
-        # Map phase to an index along the force curve samples
+        t_left = ts_at(left_idx)
+        t_right = ts_at(right_idx)
+        denom = max(1e-3, (t_right - t_left))
+        phase = float(np.clip((t_curr - t_left) / denom, 0.0, 1.0))
+        closest_force = self.force_data[left_idx]
+        if not closest_force or not closest_force.get('force_curve'):
+            return None
         num_pts = len(closest_force['force_curve'])
         current_idx = int(np.clip(round(phase * (num_pts - 1)), 0, num_pts - 1))
 
