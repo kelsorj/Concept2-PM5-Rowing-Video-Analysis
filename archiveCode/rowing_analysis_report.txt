@@ -1,0 +1,37 @@
+🚣‍♂️ ROWING KINEMATICS ANALYSIS REPORT
+==================================================
+
+Generated: 2025-10-01 18:56:52
+
+STROKE PHASES:
+--------------------
+Drive Ratio: 38.05%
+Drive Frames: 481
+Recovery Frames: 783
+
+JOINT METRICS:
+--------------------
+Left Arm Range: 136.5°
+Right Arm Range: 154.4°
+Left Leg Range: 149.6°
+Right Leg Range: 141.7°
+Torso Range: 359.9°
+
+SYMMETRY METRICS:
+--------------------
+Arm Symmetry (Mean Diff): 6.9°
+Leg Symmetry (Mean Diff): -1.9°
+Arm Correlation: 0.963
+Leg Correlation: 0.999
+
+TIMING METRICS:
+--------------------
+Stroke Rate: 21.4 spm
+Drive/Recovery Ratio: 0.92
+
+POWER METRICS:
+--------------------
+Average Power: 235.4W
+Max Power: 292.0W
+Average Peak Force: 222.6
+

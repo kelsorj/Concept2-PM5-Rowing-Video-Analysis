@@ -783,8 +783,8 @@ class AdvancedRowingAnalyzer:
         print(f"   📋 Technique recommendations: {recommendations_path}")
     
     def _create_analysis_video(self):
-        """Create analysis video with joint angles and power curves overlaid"""
-        print("\n🎬 Creating Analysis Video with Overlays...")
+        """Create analysis video with animated force plots and body angles overlaid"""
+        print("\n🎬 Creating Analysis Video with Animated Overlays...")
         
         if not self.pose_data:
             print("❌ No pose data available for video creation")
@@ -839,7 +839,7 @@ class AdvancedRowingAnalyzer:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
-        print(f"📊 Processing frames with analysis overlays...")
+        print(f"📊 Processing frames with animated analysis overlays...")
         
         frame_count = 0
         overlays_added = 0
@@ -869,18 +869,20 @@ class AdvancedRowingAnalyzer:
                         clip_start_dt = self.force_data[0]['timestamp_dt'] - timedelta(seconds=self.force_data[0]['clip_elapsed_s'])
                         elapsed_s = (frame_abs_dt - clip_start_dt).total_seconds()
                 
-                # Create joint angles display
-                angles_display = self._create_joint_angles_display(pose_frame, frame_count, elapsed_s)
+                # Create enhanced joint angles display
+                angles_display = self._create_enhanced_joint_angles_display(pose_frame, frame_count, elapsed_s)
                 
-                # Create power curve display (if available)
-                # Compute absolute frame datetime if we know video start
+                # Create animated power curve display (if available)
                 frame_abs_dt = None
                 if 'video_start_dt' in locals() and video_start_dt is not None:
                     frame_abs_dt = video_start_dt + timedelta(seconds=(frame_count - 1) / max(1, fps))
-                power_display = self._create_power_curve_display(elapsed_s, frame_abs_dt)
+                power_display = self._create_animated_power_curve_display(elapsed_s, frame_abs_dt)
                 
                 # Create analysis summary display
                 summary_display = self._create_analysis_summary_display(pose_frame, elapsed_s)
+                
+                # Create angle trend chart
+                angle_chart = self._create_angle_trend_chart(frame_count - 1)
                 
                 # Draw joint-level angle labels directly on the frame at each joint
                 self._draw_joint_angles_on_frame(frame, pose_frame)
@@ -897,6 +899,13 @@ class AdvancedRowingAnalyzer:
                     if px + pw <= width and py + ph <= height:
                         self._overlay_display(frame, power_display, px, py)
                         power_overlays += 1
+                
+                if angle_chart is not None:
+                    ch, cw = angle_chart.shape[:2]
+                    cx = max(0, width - cw - 10)
+                    cy = max(0, height - ch - 10)
+                    if cx + cw <= width and cy + ch <= height:
+                        self._overlay_display(frame, angle_chart, cx, cy)
                 
                 if summary_display is not None:
                     self._overlay_display(frame, summary_display, 10, height - 200)
@@ -993,6 +1002,163 @@ class AdvancedRowingAnalyzer:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['yellow'], 1)
         
         return img
+    
+    def _create_enhanced_joint_angles_display(self, pose_frame, frame_num, elapsed_s):
+        """Create enhanced joint angles display with more information"""
+        # Create a semi-transparent background
+        img = np.zeros((350, 400, 3), dtype=np.uint8)
+        
+        # Define colors
+        colors = {
+            'white': (255, 255, 255),
+            'lime': (0, 255, 0),
+            'cyan': (255, 255, 0),
+            'yellow': (0, 255, 255),
+            'red': (0, 0, 255),
+            'orange': (0, 165, 255),
+            'magenta': (255, 0, 255)
+        }
+        
+        # Title
+        cv2.putText(img, "ROWING ANALYSIS", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, colors['white'], 2)
+        
+        # Frame info
+        cv2.putText(img, f"Frame: {frame_num}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['orange'], 1)
+        cv2.putText(img, f"Time: {elapsed_s:.1f}s", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['orange'], 1)
+        
+        y_pos = 95
+        line_height = 25
+        
+        # Arm angles
+        cv2.putText(img, "ARM ANGLES:", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['white'], 1)
+        y_pos += line_height
+        
+        if pose_frame.get('left_arm_angle') is not None:
+            left_arm = pose_frame['left_arm_angle']
+            cv2.putText(img, f"  L Arm: {left_arm:.1f}°", (10, y_pos), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['lime'], 1)
+            y_pos += line_height
+        
+        if pose_frame.get('right_arm_angle') is not None:
+            right_arm = pose_frame['right_arm_angle']
+            cv2.putText(img, f"  R Arm: {right_arm:.1f}°", (10, y_pos), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['cyan'], 1)
+            y_pos += line_height
+        
+        # Leg angles
+        cv2.putText(img, "LEG ANGLES:", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['white'], 1)
+        y_pos += line_height
+        
+        if pose_frame.get('left_leg_angle') is not None:
+            left_leg = pose_frame['left_leg_angle']
+            cv2.putText(img, f"  L Leg: {left_leg:.1f}°", (10, y_pos), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['lime'], 1)
+            y_pos += line_height
+        
+        if pose_frame.get('right_leg_angle') is not None:
+            right_leg = pose_frame['right_leg_angle']
+            cv2.putText(img, f"  R Leg: {right_leg:.1f}°", (10, y_pos), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['cyan'], 1)
+            y_pos += line_height
+        
+        # Torso angle
+        cv2.putText(img, "TORSO:", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['white'], 1)
+        y_pos += line_height
+        
+        if pose_frame.get('torso_lean_angle') is not None:
+            torso = pose_frame['torso_lean_angle']
+            cv2.putText(img, f"  Lean: {torso:.1f}°", (10, y_pos), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['yellow'], 1)
+        
+        return img
+    
+    def _create_animated_power_curve_display(self, elapsed_s, frame_abs_dt=None):
+        """Create animated power curve display with current position indicator"""
+        if not self.force_data:
+            return None
+        
+        # Use a bracketing-segment approach so we never show a static curve
+        def ts_at(i):
+            e = self.force_data[i]
+            return e.get('clip_elapsed_s', e.get('elapsed_s', 0.0))
+        n = len(self.force_data)
+        if n < 2:
+            return None
+        # Find the nearest index by time
+        closest_idx = int(np.argmin([abs(elapsed_s - ts_at(i)) for i in range(n)]))
+        t_curr = float(elapsed_s)
+        left_idx, right_idx = None, None
+        if t_curr >= ts_at(closest_idx) and closest_idx + 1 < n:
+            left_idx, right_idx = closest_idx, closest_idx + 1
+        elif t_curr < ts_at(closest_idx) and closest_idx - 1 >= 0:
+            left_idx, right_idx = closest_idx - 1, closest_idx
+        else:
+            return None  # no valid segment yet; hide the plot
+
+        t_left = ts_at(left_idx)
+        t_right = ts_at(right_idx)
+        denom = max(1e-3, (t_right - t_left))
+        phase = float(np.clip((t_curr - t_left) / denom, 0.0, 1.0))
+        closest_force = self.force_data[left_idx]
+        if not closest_force or not closest_force.get('force_curve'):
+            return None
+        num_pts = len(closest_force['force_curve'])
+        current_idx = int(np.clip(round(phase * (num_pts - 1)), 0, num_pts - 1))
+
+        # Delegate to the overlay-style plot for identical look and metadata, with animated dot
+        force_curve = closest_force['force_curve']
+        spm = closest_force.get('spm')
+        distance = closest_force.get('distance')
+        plot_elapsed = closest_force.get('clip_elapsed_s', closest_force.get('elapsed_s', 0.0))
+        return self._create_force_curve_plot(force_curve, closest_force['power'], spm, distance, plot_elapsed, current_idx, frame_abs_dt)
+
+    def _create_angle_trend_chart(self, current_frame_idx):
+        """Create a mini chart showing angle trends"""
+        if current_frame_idx < 10 or not self.pose_data:
+            return None
+        
+        # Get recent angle data
+        recent_frames = self.pose_data[max(0, current_frame_idx-30):current_frame_idx+1]
+        
+        # Extract angles
+        left_arm_angles = [f.get('left_arm_angle') for f in recent_frames if f.get('left_arm_angle') is not None]
+        right_arm_angles = [f.get('right_arm_angle') for f in recent_frames if f.get('right_arm_angle') is not None]
+        
+        if not left_arm_angles or not right_arm_angles:
+            return None
+        
+        # Ensure both arrays have the same length
+        min_length = min(len(left_arm_angles), len(right_arm_angles))
+        left_arm_angles = left_arm_angles[:min_length]
+        right_arm_angles = right_arm_angles[:min_length]
+        
+        # Create mini chart
+        fig, ax = plt.subplots(figsize=(3, 2), dpi=80)
+        fig.patch.set_facecolor('black')
+        ax.set_facecolor('black')
+        
+        x = np.arange(len(left_arm_angles))
+        ax.plot(x, left_arm_angles, 'lime', linewidth=2, label='L Arm')
+        ax.plot(x, right_arm_angles, 'cyan', linewidth=2, label='R Arm')
+        
+        ax.set_title('Arm Angles Trend', color='white', fontsize=10)
+        ax.set_ylabel('Degrees', color='white', fontsize=8)
+        ax.tick_params(colors='white', labelsize=6)
+        ax.legend(fontsize=6)
+        ax.grid(True, alpha=0.3, color='gray')
+        
+        plt.tight_layout()
+        
+        # Convert to image
+        canvas = FigureCanvasAgg(fig)
+        canvas.draw()
+        buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8)
+        buf = buf.reshape(canvas.get_width_height()[::-1] + (4,))
+        buf = buf[:, :, :3]  # Remove alpha channel
+        
+        plt.close(fig)
+        
+        return cv2.cvtColor(buf, cv2.COLOR_RGB2BGR)
     
     def _create_power_curve_display(self, elapsed_s, frame_abs_dt=None):
         """Create power curve display overlay"""

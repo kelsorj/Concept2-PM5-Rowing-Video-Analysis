@@ -1,7 +1,7 @@
 🚣‍♂️ COMPREHENSIVE ROWING ANALYSIS REPORT
 ============================================================
 
-Analysis Date: 2025-10-01 22:12:18
+Analysis Date: 2025-10-04 12:54:30
 Total Frames Analyzed: 1278
 
 JOINT KINEMATICS ANALYSIS
@@ -29,13 +29,7 @@ RIGHT_LEG JOINT:
   Range of Motion: 141.7°
   Mean Angle: 128.0°
   Angular Velocity: 3.26°/frame
-  Angle Range: 38.3° - 180.0°
-
-TORSO JOINT:
-  Range of Motion: 359.9°
-  Mean Angle: -22.0°
-  Angular Velocity: 9.32°/frame
-  Angle Range: -180.0° - 179.9°
+  Angle Range: 38.3° - 179.9°
 
 SYMMETRY ANALYSIS
 ----------------------------------------

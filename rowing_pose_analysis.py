@@ -189,8 +189,16 @@ def main():
                     row_data[field] = pose_analysis.get(field, None)
                 csv_writer.writerow(row_data)
             
-            # Store for JSON
-            json_data.append(pose_analysis)
+            # Store for JSON (convert numpy types to Python types)
+            json_pose_analysis = {}
+            for key, value in pose_analysis.items():
+                if hasattr(value, 'item'):  # numpy scalar
+                    json_pose_analysis[key] = value.item()
+                elif isinstance(value, (list, tuple)):
+                    json_pose_analysis[key] = [v.item() if hasattr(v, 'item') else v for v in value]
+                else:
+                    json_pose_analysis[key] = value
+            json_data.append(json_pose_analysis)
             
             # Draw pose on frame
             annotator = Annotator(frame, line_width=2)
@@ -251,7 +259,7 @@ def main():
         print(f"\n📊 Body Angle Summary:")
         angle_keys = [k for k in json_data[0].keys() if 'angle' in k]
         for angle_key in angle_keys:
-            values = [d[angle_key] for d in json_data if d[angle_key] is not None]
+            values = [d.get(angle_key) for d in json_data if d.get(angle_key) is not None]
             if values:
                 print(f"   {angle_key}: {min(values):.1f}° - {max(values):.1f}° (avg: {np.mean(values):.1f}°)")
 
