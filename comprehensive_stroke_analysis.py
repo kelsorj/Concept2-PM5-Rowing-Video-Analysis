@@ -18,8 +18,10 @@ import argparse
 class ComprehensiveStrokeAnalysis:
     """Generate comprehensive stroke analysis with video frames and sequence plot"""
     
-    def __init__(self):
-        pass
+    def __init__(self, force_mapping='overlay'):
+        # force_mapping: 'even' to match PM5 overlay shape, 'timestamps' to align by time,
+        # 'overlay' to reproduce the exact overlay shape without interpolation
+        self.force_mapping = force_mapping
     
     def find_video_file(self, analysis_dir):
         """Find the original video file for the analysis"""
@@ -80,12 +82,52 @@ class ComprehensiveStrokeAnalysis:
         if not raw_csv_files:
             raw_csv_files = glob.glob(os.path.join(analysis_dir, "*_raw.csv"))
         
+        # Prefer combined JSON if present (highest fidelity, saved by overlay pipeline)
         combined_strokes = None
-        if raw_csv_files:
-            print(f"📊 Loading force data from: {raw_csv_files[0]}")
-            combined_strokes = self.load_and_combine_force_data(raw_csv_files[0])
-        else:
-            print("⚠️  No force data found - will use theoretical curves")
+        combined_json_path = os.path.join(analysis_dir, 'pm5_combined_strokes.json')
+        if os.path.exists(combined_json_path):
+            try:
+                print(f"📊 Loading combined strokes JSON: {combined_json_path}")
+                with open(combined_json_path, 'r') as jf:
+                    data = json.load(jf)
+                # Convert JSON back to the structure used by downstream consumers
+                combined_strokes = []
+                for s in data:
+                    stroke = {
+                        'start_timestamp_dt': datetime.fromisoformat(s['start_timestamp_iso']),
+                        'end_timestamp_dt': datetime.fromisoformat(s['end_timestamp_iso']),
+                        'start_elapsed_s': s.get('start_elapsed_s'),
+                        'end_elapsed_s': s.get('end_elapsed_s'),
+                        'stroke_duration': s.get('stroke_duration'),
+                        'final_power': s.get('final_power'),
+                        'final_spm': s.get('final_spm'),
+                        'final_distance': s.get('final_distance'),
+                        'stroke_phases': s.get('stroke_phases', []),
+                        'combined_forceplot': s.get('combined_forceplot', []),
+                        'measurements': []
+                    }
+                    for m in s.get('measurements', []):
+                        stroke['measurements'].append({
+                            'timestamp_dt': datetime.fromisoformat(m.get('timestamp_iso')) if m.get('timestamp_iso') else None,
+                            'elapsed_s': m.get('elapsed_s'),
+                            'distance_m': m.get('distance_m'),
+                            'spm': m.get('spm'),
+                            'power': m.get('power'),
+                            'forceplot': m.get('forceplot', []),
+                            'strokestate': m.get('strokestate')
+                        })
+                    combined_strokes.append(stroke)
+                print(f"   Loaded {len(combined_strokes)} strokes from combined JSON")
+            except Exception as e:
+                print(f"   ⚠️  Failed to load combined strokes JSON, will fallback to raw CSV: {e}")
+
+        # If JSON was not available or was empty, fall back to raw CSV; otherwise warn
+        if combined_strokes is None or (isinstance(combined_strokes, list) and len(combined_strokes) == 0):
+            if raw_csv_files:
+                print(f"📊 Loading force data from: {raw_csv_files[0]}")
+                combined_strokes = self.load_and_combine_force_data(raw_csv_files[0])
+            else:
+                print("⚠️  No force data found - will use theoretical curves")
         
         return {
             'dataframe': df,
@@ -337,61 +379,83 @@ class ComprehensiveStrokeAnalysis:
         recovery_curve = np.exp(-((time_axis[recovery_mask] - 0.6) / 0.08) ** 2)
         arm_contribution[recovery_mask] = -recovery_curve * 0.7  # Higher negative contribution
         
-        # Handle: Use actual force data mapped by timestamps
+        # Handle: Use actual force data mapped per selected strategy
         handle_contribution = np.zeros_like(time_axis)
         
         if stroke_force_data and len(stroke_force_data) > 0 and stroke_start_time and stroke_end_time:
             # Map force data to video frames using actual timestamps
             max_force = max(stroke_force_data)
             if max_force > 0:
-                # Get the actual timestamps for the force data from the stroke measurements
-                stroke_info = combined_strokes[stroke_number - 1]
-                measurements = stroke_info['measurements']
-
-                # Create timestamps for each force point by distributing within measurement intervals
-                force_relative_times = []
-                force_values = []
-
-                for i, measurement in enumerate(measurements):
-                    if measurement['forceplot']:
-                        # Get timestamp for this measurement
-                        measurement_time = measurement['timestamp_dt']
-                        relative_measurement_time = (measurement_time - stroke_start_time).total_seconds() / stroke_duration
-
-                        # Distribute forceplot points evenly within this measurement interval
-                        forceplot_data = measurement['forceplot']
-                        num_points = len(forceplot_data)
-
-                        if num_points > 0:
-                            # For multiple points in one measurement, distribute them evenly around the measurement time
-                            if num_points == 1:
-                                # Single point at measurement time
-                                force_relative_times.append(relative_measurement_time)
-                                force_values.append(forceplot_data[0])
-                            else:
-                                # Multiple points - distribute evenly around measurement time
-                                # Assume they span a short interval (e.g., 0.1 seconds) around the measurement timestamp
-                                interval_duration = 0.05  # 50ms interval for forceplot burst
-                                start_time = relative_measurement_time - interval_duration / 2
-                                end_time = relative_measurement_time + interval_duration / 2
-
-                                for j in range(num_points):
-                                    point_time = start_time + (j / (num_points - 1)) * interval_duration
-                                    force_relative_times.append(point_time)
-                                    force_values.append(forceplot_data[j])
-
-                # Normalize force data
-                if force_values:
-                    normalized_force = np.array(force_values) / max_force
-
-                    # Interpolate force data using actual distributed timestamps
-                    handle_contribution = np.interp(time_axis, force_relative_times, normalized_force,
-                                                   left=0.0, right=0.0)  # Zero force outside measured range
+                if 'stroke_duration' in locals():
+                    stroke_duration_local = stroke_duration
                 else:
-                    handle_contribution = np.zeros_like(time_axis)
-                
-                # Recovery phase should have zero force
-                handle_contribution[recovery_mask] = 0.0
+                    stroke_duration_local = (stroke_end_time - stroke_start_time).total_seconds()
+
+                mapping_mode = getattr(self, 'force_mapping', 'overlay')
+
+                if mapping_mode == 'timestamps':
+                    # Get the actual timestamps for the force data from the stroke measurements
+                    stroke_info = combined_strokes[stroke_number - 1]
+                    measurements = stroke_info['measurements']
+
+                    # Create timestamps for each force point by distributing within measurement intervals
+                    force_relative_times = []
+                    force_values = []
+
+                    for i, measurement in enumerate(measurements):
+                        if measurement['forceplot']:
+                            # Get timestamp for this measurement
+                            measurement_time = measurement['timestamp_dt']
+                            relative_measurement_time = (measurement_time - stroke_start_time).total_seconds() / stroke_duration_local
+
+                            # Distribute forceplot points evenly within this measurement interval
+                            forceplot_data = measurement['forceplot']
+                            num_points = len(forceplot_data)
+
+                            if num_points > 0:
+                                if num_points == 1:
+                                    # Single point at measurement time
+                                    force_relative_times.append(relative_measurement_time)
+                                    force_values.append(forceplot_data[0])
+                                else:
+                                    # Multiple points - distribute evenly around measurement time (short burst)
+                                    interval_duration = 0.05  # 50ms interval for forceplot burst
+                                    start_time = relative_measurement_time - interval_duration / 2
+                                    end_time = relative_measurement_time + interval_duration / 2
+
+                                    for j in range(num_points):
+                                        point_time = start_time + (j / (num_points - 1)) * interval_duration
+                                        force_relative_times.append(point_time)
+                                        force_values.append(forceplot_data[j])
+
+                    # Normalize and interpolate across the entire time axis
+                    if force_values:
+                        normalized_force = np.array(force_values) / max_force
+                        handle_contribution = np.interp(time_axis, force_relative_times, normalized_force,
+                                                       left=0.0, right=0.0)
+                    else:
+                        handle_contribution = np.zeros_like(time_axis)
+                elif mapping_mode == 'overlay':
+                    # Reproduce overlay exactly: sample combined_forceplot against drive portion with nearest index
+                    stroke_info = combined_strokes[stroke_number - 1]
+                    force_series = np.array(stroke_info['combined_forceplot'], dtype=float)
+                    if force_series.size > 0:
+                        normalized_force = force_series / np.max(force_series)
+                        # Map each drive time sample to nearest force index
+                        drive_indices = np.round((time_axis[drive_mask] / 0.5) * (len(normalized_force) - 1)).astype(int)
+                        drive_indices = np.clip(drive_indices, 0, len(normalized_force) - 1)
+                        handle_contribution[drive_mask] = normalized_force[drive_indices]
+                        handle_contribution[recovery_mask] = 0.0
+                    else:
+                        handle_contribution = np.zeros_like(time_axis)
+                else:
+                    # Evenly distribute the force points across the drive phase only (matches PM5 overlay)
+                    drive_force_points = len(stroke_force_data)
+                    drive_time_axis = np.linspace(0, 0.5, drive_force_points)
+                    normalized_force = np.array(stroke_force_data) / max_force
+                    drive_force = np.interp(time_axis[drive_mask], drive_time_axis, normalized_force)
+                    handle_contribution[drive_mask] = drive_force
+                    handle_contribution[recovery_mask] = 0.0
             else:
                 handle_contribution = np.zeros_like(time_axis)
         else:
@@ -667,6 +731,8 @@ def main():
     """Main function"""
     parser = argparse.ArgumentParser(description="Generate comprehensive stroke analyses")
     parser.add_argument("analysis_dir", help="Analysis directory path containing the data")
+    parser.add_argument("--force-mapping", choices=["even", "timestamps", "overlay"], default="overlay",
+                        help="How to map PM5 force: default 'overlay' reproduces video overlay; 'even' distributes; 'timestamps' aligns by time")
     
     args = parser.parse_args()
     
@@ -677,7 +743,7 @@ def main():
         return
     
     # Initialize generator
-    generator = ComprehensiveStrokeAnalysis()
+    generator = ComprehensiveStrokeAnalysis(force_mapping=args.force_mapping)
     
     # Generate comprehensive analyses
     generator.generate_all_comprehensive_analyses(args.analysis_dir)

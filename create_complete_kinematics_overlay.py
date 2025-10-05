@@ -1011,6 +1011,51 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
     frame_timestamps = load_frame_timestamps(frames_csv_path)
     combined_strokes = load_and_combine_force_data(raw_csv_path)
     
+    # Persist high-granularity PM5 data into analysis output for portability
+    try:
+        # 1) Copy the original raw PM5 CSV into the analysis folder
+        raw_csv_dest = os.path.join(output_dir, os.path.basename(raw_csv_path))
+        if not os.path.exists(raw_csv_dest):
+            shutil.copy2(raw_csv_path, raw_csv_dest)
+            print(f"   💾 Copied raw PM5 CSV to analysis folder: {os.path.basename(raw_csv_dest)}")
+        else:
+            print(f"   💾 Raw PM5 CSV already present in analysis folder: {os.path.basename(raw_csv_dest)}")
+
+        # 2) Save combined strokes (with full force arrays) as JSON for direct consumption
+        combined_json_path = os.path.join(output_dir, 'pm5_combined_strokes.json')
+        if combined_strokes:
+            serializable = []
+            for stroke in combined_strokes:
+                serializable.append({
+                    'start_timestamp_iso': stroke['start_timestamp_dt'].isoformat(),
+                    'end_timestamp_iso': stroke.get('end_timestamp_dt', stroke['start_timestamp_dt']).isoformat(),
+                    'start_elapsed_s': stroke.get('start_elapsed_s'),
+                    'end_elapsed_s': stroke.get('end_elapsed_s'),
+                    'stroke_duration': stroke.get('stroke_duration'),
+                    'final_power': stroke.get('final_power'),
+                    'final_spm': stroke.get('final_spm'),
+                    'final_distance': stroke.get('final_distance'),
+                    'stroke_phases': stroke.get('stroke_phases', []),
+                    'combined_forceplot': stroke.get('combined_forceplot', []),
+                    'measurements': [
+                        {
+                            'timestamp_iso': m.get('timestamp_dt').isoformat() if m.get('timestamp_dt') else m.get('timestamp_iso'),
+                            'elapsed_s': m.get('elapsed_s'),
+                            'distance_m': m.get('distance_m'),
+                            'spm': m.get('spm'),
+                            'power': m.get('power'),
+                            'forceplot': m.get('forceplot', []),
+                            'strokestate': m.get('strokestate')
+                        }
+                        for m in stroke.get('measurements', [])
+                    ]
+                })
+            with open(combined_json_path, 'w') as jf:
+                json.dump(serializable, jf)
+            print(f"   💾 Saved combined PM5 strokes JSON: {os.path.basename(combined_json_path)}")
+    except Exception as e:
+        print(f"   ⚠️  Could not persist PM5 raw/combined data to analysis folder: {e}")
+    
     with open(pose_json_path, 'r') as f:
         pose_data = json.load(f)
     print(f"📊 Loaded {len(pose_data)} pose frames from kinematics analysis")
