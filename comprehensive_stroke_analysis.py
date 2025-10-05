@@ -341,20 +341,54 @@ class ComprehensiveStrokeAnalysis:
         handle_contribution = np.zeros_like(time_axis)
         
         if stroke_force_data and len(stroke_force_data) > 0 and stroke_start_time and stroke_end_time:
-            # Map force data to video frames using timestamps
+            # Map force data to video frames using actual timestamps
             max_force = max(stroke_force_data)
             if max_force > 0:
-                # Force data from PM5 only represents the drive phase
-                # Map it to the drive phase (0 to 0.5) of our time axis
-                drive_force_points = len(stroke_force_data)
-                drive_time_axis = np.linspace(0, 0.5, drive_force_points)
-                
+                # Get the actual timestamps for the force data from the stroke measurements
+                stroke_info = combined_strokes[stroke_number - 1]
+                measurements = stroke_info['measurements']
+
+                # Create timestamps for each force point by distributing within measurement intervals
+                force_relative_times = []
+                force_values = []
+
+                for i, measurement in enumerate(measurements):
+                    if measurement['forceplot']:
+                        # Get timestamp for this measurement
+                        measurement_time = measurement['timestamp_dt']
+                        relative_measurement_time = (measurement_time - stroke_start_time).total_seconds() / stroke_duration
+
+                        # Distribute forceplot points evenly within this measurement interval
+                        forceplot_data = measurement['forceplot']
+                        num_points = len(forceplot_data)
+
+                        if num_points > 0:
+                            # For multiple points in one measurement, distribute them evenly around the measurement time
+                            if num_points == 1:
+                                # Single point at measurement time
+                                force_relative_times.append(relative_measurement_time)
+                                force_values.append(forceplot_data[0])
+                            else:
+                                # Multiple points - distribute evenly around measurement time
+                                # Assume they span a short interval (e.g., 0.1 seconds) around the measurement timestamp
+                                interval_duration = 0.05  # 50ms interval for forceplot burst
+                                start_time = relative_measurement_time - interval_duration / 2
+                                end_time = relative_measurement_time + interval_duration / 2
+
+                                for j in range(num_points):
+                                    point_time = start_time + (j / (num_points - 1)) * interval_duration
+                                    force_relative_times.append(point_time)
+                                    force_values.append(forceplot_data[j])
+
                 # Normalize force data
-                normalized_force = np.array(stroke_force_data) / max_force
-                
-                # Interpolate force data to the drive phase only
-                drive_force = np.interp(time_axis[drive_mask], drive_time_axis, normalized_force)
-                handle_contribution[drive_mask] = drive_force
+                if force_values:
+                    normalized_force = np.array(force_values) / max_force
+
+                    # Interpolate force data using actual distributed timestamps
+                    handle_contribution = np.interp(time_axis, force_relative_times, normalized_force,
+                                                   left=0.0, right=0.0)  # Zero force outside measured range
+                else:
+                    handle_contribution = np.zeros_like(time_axis)
                 
                 # Recovery phase should have zero force
                 handle_contribution[recovery_mask] = 0.0
