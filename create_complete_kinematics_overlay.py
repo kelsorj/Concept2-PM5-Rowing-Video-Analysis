@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Create Metadata Synchronized Overlay Video
-Uses the actual frame timestamps from the CSV file for perfect synchronization
+Create Complete Kinematics Overlay
+Runs kinematics analysis on the video first, then creates synchronized overlay with force data
 """
 
 import cv2
@@ -16,6 +16,204 @@ from datetime import datetime, timedelta
 import argparse
 import re
 import glob
+from ultralytics import YOLO
+import tempfile
+import shutil
+
+def analyze_rowing_pose(keypoints):
+    """Analyze rowing pose and calculate body angles"""
+    # YOLO pose keypoints: [nose, left_eye, right_eye, left_ear, right_ear, left_shoulder, right_shoulder, 
+    # left_elbow, right_elbow, left_wrist, right_wrist, left_hip, right_hip, left_knee, right_knee, left_ankle, right_ankle]
+    
+    analysis = {}
+    
+    # Extract keypoints with confidence
+    keypoint_names = [
+        'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
+        'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+        'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
+        'left_knee', 'right_knee', 'left_ankle', 'right_ankle'
+    ]
+    
+    # Store all keypoint coordinates and confidence
+    for i, name in enumerate(keypoint_names):
+        if i < len(keypoints):
+            kpt = keypoints[i]
+            analysis[f'{name}_x'] = float(kpt[0])
+            analysis[f'{name}_y'] = float(kpt[1])
+            analysis[f'{name}_confidence'] = float(kpt[2])
+    
+    # Calculate angles
+    def calc_angle(p1, p2, p3):
+        """Calculate angle between three points"""
+        if p1 is None or p2 is None or p3 is None:
+            return None
+        a = np.array(p1, dtype=np.float32)
+        b = np.array(p2, dtype=np.float32)
+        c = np.array(p3, dtype=np.float32)
+        v1 = a - b
+        v2 = c - b
+        denom = (np.linalg.norm(v1) * np.linalg.norm(v2))
+        if denom == 0:
+            return None
+        cosang = np.clip(np.dot(v1, v2) / denom, -1.0, 1.0)
+        return float(np.degrees(np.arccos(cosang)))
+    
+    def get_kpt(name):
+        """Get keypoint coordinates if confidence > 0.5"""
+        x_key, y_key, c_key = f"{name}_x", f"{name}_y", f"{name}_confidence"
+        if x_key in analysis and y_key in analysis and c_key in analysis:
+            conf = analysis.get(c_key, 0)
+            if conf is None:
+                conf = 0
+            if conf > 0.5:
+                return (analysis[x_key], analysis[y_key])
+        return None
+    
+    # Calculate arm angles (shoulder-elbow-wrist)
+    left_shoulder = get_kpt('left_shoulder')
+    right_shoulder = get_kpt('right_shoulder')
+    left_elbow = get_kpt('left_elbow')
+    right_elbow = get_kpt('right_elbow')
+    left_wrist = get_kpt('left_wrist')
+    right_wrist = get_kpt('right_wrist')
+    
+    if left_shoulder and left_elbow and left_wrist:
+        analysis['left_arm_angle'] = calc_angle(left_shoulder, left_elbow, left_wrist)
+    else:
+        analysis['left_arm_angle'] = None
+    
+    if right_shoulder and right_elbow and right_wrist:
+        analysis['right_arm_angle'] = calc_angle(right_shoulder, right_elbow, right_wrist)
+    else:
+        analysis['right_arm_angle'] = None
+    
+    # Calculate leg angles (hip-knee-ankle)
+    left_hip = get_kpt('left_hip')
+    right_hip = get_kpt('right_hip')
+    left_knee = get_kpt('left_knee')
+    right_knee = get_kpt('right_knee')
+    left_ankle = get_kpt('left_ankle')
+    right_ankle = get_kpt('right_ankle')
+    
+    if left_hip and left_knee and left_ankle:
+        analysis['left_leg_angle'] = calc_angle(left_hip, left_knee, left_ankle)
+    else:
+        analysis['left_leg_angle'] = None
+    
+    if right_hip and right_knee and right_ankle:
+        analysis['right_leg_angle'] = calc_angle(right_hip, right_knee, right_ankle)
+    else:
+        analysis['right_leg_angle'] = None
+    
+    # Calculate torso lean (shoulder-hip angle relative to vertical)
+    if left_shoulder and right_shoulder and left_hip and right_hip:
+        shoulder_center = ((left_shoulder[0] + right_shoulder[0]) / 2, (left_shoulder[1] + right_shoulder[1]) / 2)
+        hip_center = ((left_hip[0] + right_hip[0]) / 2, (left_hip[1] + right_hip[1]) / 2)
+        vertical_ref = (shoulder_center[0], shoulder_center[1] + 100)
+        analysis['torso_lean_angle'] = calc_angle(vertical_ref, shoulder_center, hip_center)
+    else:
+        analysis['torso_lean_angle'] = None
+    
+    return analysis
+
+def run_kinematics_analysis(video_path, output_dir="kinematics_analysis"):
+    """Run kinematics analysis on the video and return pose data"""
+    print(f"🤖 Running kinematics analysis on: {video_path}")
+    
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Check if video exists
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"❌ Error: Could not open video file: {video_path}")
+        return None
+    
+    # Get video properties
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    print(f"📹 Video: {w}x{h} @ {fps}fps, {total_frames} frames")
+    
+    # Initialize YOLO pose model
+    model = YOLO('yolo11n-pose.pt')
+    print("🤖 Loaded YOLO11 pose model")
+    
+    # Output files
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_json = os.path.join(output_dir, f"pose_data_{timestamp}.json")
+    
+    # JSON data storage
+    json_data = []
+    
+    frame_count = 0
+    print("📊 Processing video frames for kinematics...")
+    
+    while cap.isOpened():
+        success, frame = cap.read()
+        if not success:
+            break
+        
+        frame_count += 1
+        
+        # Run pose detection
+        results = model(frame, verbose=False)
+        
+        if results and len(results) > 0 and results[0].keypoints is not None:
+            # Get keypoints for the first person detected
+            keypoints = results[0].keypoints.data[0].cpu().numpy()
+            
+            # Analyze pose
+            pose_analysis = analyze_rowing_pose(keypoints)
+            
+            # Add frame info
+            pose_analysis['frame_number'] = frame_count
+            pose_analysis['timestamp'] = frame_count / fps
+            pose_analysis['frame_time'] = datetime.now().isoformat()
+            
+            # Store for JSON (convert numpy types to Python types)
+            json_pose_analysis = {}
+            for key, value in pose_analysis.items():
+                if hasattr(value, 'item'):  # numpy scalar
+                    json_pose_analysis[key] = value.item()
+                elif isinstance(value, (list, tuple)):
+                    json_pose_analysis[key] = [v.item() if hasattr(v, 'item') else v for v in value]
+                else:
+                    json_pose_analysis[key] = value
+            json_data.append(json_pose_analysis)
+        else:
+            # No person detected, add empty frame
+            empty_frame = {
+                'frame_number': frame_count,
+                'timestamp': frame_count / fps,
+                'frame_time': datetime.now().isoformat(),
+                'left_arm_angle': None,
+                'right_arm_angle': None,
+                'left_leg_angle': None,
+                'right_leg_angle': None,
+                'torso_lean_angle': None
+            }
+            json_data.append(empty_frame)
+        
+        # Progress update
+        if frame_count % 50 == 0:
+            progress = (frame_count / total_frames) * 100
+            print(f"   Processed {frame_count}/{total_frames} frames ({progress:.1f}%)")
+    
+    # Cleanup
+    cap.release()
+    
+    # Save JSON data
+    with open(output_json, 'w') as f:
+        json.dump(json_data, f, indent=2)
+    
+    print(f"✅ Kinematics analysis complete!")
+    print(f"   📊 Processed {frame_count} frames")
+    print(f"   💾 Pose data saved: {output_json}")
+    
+    return output_json
 
 def load_frame_timestamps(frames_csv_path):
     """Load frame timestamps from the CSV file"""
@@ -121,14 +319,6 @@ def load_and_combine_force_data(raw_csv_path):
     
     return combined_strokes
 
-def load_pose_data(pose_json_path):
-    """Load pose analysis data from JSON file"""
-    print(f"📊 Loading pose data: {pose_json_path}")
-    with open(pose_json_path, 'r') as f:
-        pose_data = json.load(f)
-    print(f"   Loaded {len(pose_data)} pose frames")
-    return pose_data
-
 def create_animated_force_curve_plot(force_curve, power, spm, current_idx=None, stroke_num=None, frame_abs_dt=None):
     """Create an animated force curve plot with current position indicator"""
     if not force_curve:
@@ -208,59 +398,8 @@ def create_enhanced_joint_angles_display(pose_frame, frame_num, elapsed_s):
     
     return img
 
-def create_angle_trend_chart(current_frame_idx, pose_data, window_size=30):
-    """Create a mini chart showing angle trends"""
-    if current_frame_idx < 10 or not pose_data:
-        return None
-    
-    # Get recent angle data
-    start_idx = max(0, current_frame_idx - window_size)
-    recent_frames = pose_data[start_idx:current_frame_idx + 1]
-    
-    # Extract angles
-    left_arm_angles = [f.get('left_arm_angle') for f in recent_frames if f.get('left_arm_angle') is not None]
-    right_arm_angles = [f.get('right_arm_angle') for f in recent_frames if f.get('right_arm_angle') is not None]
-    
-    if not left_arm_angles or not right_arm_angles:
-        return None
-    
-    # Ensure both arrays have the same length
-    min_length = min(len(left_arm_angles), len(right_arm_angles))
-    left_arm_angles = left_arm_angles[:min_length]
-    right_arm_angles = right_arm_angles[:min_length]
-    
-    # Create mini chart
-    fig, ax = plt.subplots(figsize=(3, 2), dpi=80)
-    fig.patch.set_facecolor('black')
-    ax.set_facecolor('black')
-    
-    x = np.arange(len(left_arm_angles))
-    ax.plot(x, left_arm_angles, 'lime', linewidth=2, label='L Arm')
-    ax.plot(x, right_arm_angles, 'cyan', linewidth=2, label='R Arm')
-    
-    ax.set_title('Arm Angles Trend', color='white', fontsize=10)
-    ax.set_ylabel('Degrees', color='white', fontsize=8)
-    ax.tick_params(colors='white', labelsize=6)
-    ax.legend(fontsize=6)
-    ax.grid(True, alpha=0.3, color='gray')
-    
-    plt.tight_layout()
-    
-    # Convert to image
-    canvas = FigureCanvasAgg(fig)
-    canvas.draw()
-    buf = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8)
-    buf = buf.reshape(canvas.get_width_height()[::-1] + (4,))
-    buf = buf[:, :, :3]
-    plt.close(fig)
-    
-    return cv2.cvtColor(buf, cv2.COLOR_RGB2BGR)
-
 def draw_joint_angles_on_frame(frame, pose_frame):
-    """Draw angles at the elbow, knee, hip (and torso lean) directly on the video frame.
-    This makes it clear what each angle represents by rendering the numeric value at the
-    joint vertex and drawing simple limb segments.
-    """
+    """Draw angles at the elbow, knee, hip (and torso lean) directly on the video frame."""
     if not pose_frame:
         return
     
@@ -312,10 +451,9 @@ def draw_joint_angles_on_frame(frame, pose_frame):
         cv2.rectangle(frame, (x1, y1), (x2, y2), bg_color, -1)
         cv2.rectangle(frame, (x1, y1), (x2, y2), (50,50,50), 1)
         cv2.putText(frame, text, (x1 + pad, y2 - pad - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
-        # Manually render a degree symbol as a small circle to avoid unicode issues
         if draw_deg:
             cx = x1 + pad + tw + 6
-            cy = y1 + th // 3  # slightly above midline
+            cy = y1 + th // 3
             cx = min(cx, frame.shape[1]-3)
             cy = max(3, min(cy, frame.shape[0]-3))
             cv2.circle(frame, (cx, cy), 4, text_color, 2)
@@ -336,7 +474,7 @@ def draw_joint_angles_on_frame(frame, pose_frame):
 
     # Colors (BGR)
     color_arm = (0, 255, 255)   # yellow
-    color_leg = (255, 153, 0)   # blue-ish? actually BGR; but we'll keep distinct
+    color_leg = (255, 153, 0)   # orange
     color_left = (0, 255, 0)    # green for left joint dot
     color_right = (255, 0, 0)   # red for right joint dot
 
@@ -383,82 +521,10 @@ def draw_joint_angles_on_frame(frame, pose_frame):
     if ang_right_hip is not None:
         draw_badge(rh, f"{ang_right_hip:.0f}", (200, 200, 200), draw_deg=True)
 
-    # Ankle dorsiflexion/plantarflexion approximation:
-    # angle between shank (knee->ankle) and a vertical reference line through the ankle
-    def draw_vertical_dotted(p_start, length=110, color=(180, 180, 180)):
-        if p_start is None:
-            return None
-        x, y = p_start
-        y2 = max(0, y - length)
-        # dotted vertical line
-        for t in range(y2, y, 8):
-            cv2.line(frame, (x, t), (x, min(y, t+4)), color, 2)
-        return (x, y2)
-
-    # Left ankle angle (signed relative to vertical): positive when knee is forward (to the right)
-    if la is not None and lk is not None:
-        top = draw_vertical_dotted(la)
-        if top is not None:
-            # Signed angle using reference vector up (vertical) and shank vector
-            v_ref = np.array([0.0, -1.0], dtype=np.float32)  # up
-            v_shank = np.array([lk[0] - la[0], lk[1] - la[1]], dtype=np.float32)
-            n = np.linalg.norm(v_shank)
-            if n > 0:
-                v_shank /= n
-                cross_z = v_ref[0]*v_shank[1] - v_ref[1]*v_shank[0]
-                dot = v_ref[0]*v_shank[0] + v_ref[1]*v_shank[1]
-                signed_deg = float(np.degrees(np.arctan2(cross_z, dot)))
-                draw_badge(la, f"{signed_deg:.0f}", (255, 255, 0), draw_deg=True)
-
-    # Right ankle angle (signed relative to vertical): positive when knee is forward (to the right)
-    if ra is not None and rk is not None:
-        top = draw_vertical_dotted(ra)
-        if top is not None:
-            v_ref = np.array([0.0, -1.0], dtype=np.float32)
-            v_shank = np.array([rk[0] - ra[0], rk[1] - ra[1]], dtype=np.float32)
-            n = np.linalg.norm(v_shank)
-            if n > 0:
-                v_shank /= n
-                cross_z = v_ref[0]*v_shank[1] - v_ref[1]*v_shank[0]
-                dot = v_ref[0]*v_shank[0] + v_ref[1]*v_shank[1]
-                signed_deg = float(np.degrees(np.arctan2(cross_z, dot)))
-                draw_badge(ra, f"{signed_deg:.0f}", (255, 255, 0), draw_deg=True)
-
-    # Thigh angle relative to vertical (hip->knee vs vertical), analogous to ankle logic
-    # Left thigh
-    if lh is not None and lk is not None:
-        top = draw_vertical_dotted(lh)
-        if top is not None:
-            v_ref = np.array([0.0, -1.0], dtype=np.float32)  # up
-            v_thigh = np.array([lk[0] - lh[0], lk[1] - lh[1]], dtype=np.float32)
-            n = np.linalg.norm(v_thigh)
-            if n > 0:
-                v_thigh /= n
-                cross_z = v_ref[0]*v_thigh[1] - v_ref[1]*v_thigh[0]
-                dot = v_ref[0]*v_thigh[0] + v_ref[1]*v_thigh[1]
-                signed_deg = float(np.degrees(np.arctan2(cross_z, dot)))
-                # Use orange-ish badge for thigh
-                draw_badge(lh, f"{signed_deg:.0f}", (0, 165, 255), draw_deg=True)
-
-    # Right thigh
-    if rh is not None and rk is not None:
-        top = draw_vertical_dotted(rh)
-        if top is not None:
-            v_ref = np.array([0.0, -1.0], dtype=np.float32)
-            v_thigh = np.array([rk[0] - rh[0], rk[1] - rh[1]], dtype=np.float32)
-            n = np.linalg.norm(v_thigh)
-            if n > 0:
-                v_thigh /= n
-                cross_z = v_ref[0]*v_thigh[1] - v_ref[1]*v_thigh[0]
-                dot = v_ref[0]*v_thigh[0] + v_ref[1]*v_thigh[1]
-                signed_deg = float(np.degrees(np.arctan2(cross_z, dot)))
-                draw_badge(rh, f"{signed_deg:.0f}", (0, 165, 255), draw_deg=True)
-
     # Torso lean badge near midpoint between shoulders
     if ls is not None and rs is not None and lh is not None and rh is not None:
         shoulder_center = (int((ls[0] + rs[0]) / 2), int((ls[1] + rs[1]) / 2))
         hip_center = (int((lh[0] + rh[0]) / 2), int((lh[1] + rh[1]) / 2))
-        # vertical ref from shoulder center straight down
         vertical_ref = (shoulder_center[0], shoulder_center[1] + 100)
         torso_angle = calc_angle(vertical_ref, shoulder_center, hip_center)
         if torso_angle is not None:
@@ -509,18 +575,35 @@ def find_closest_stroke_for_time(target_time, combined_strokes):
     
     return closest_stroke, closest_idx, stroke_num
 
-def create_metadata_synchronized_overlay_video(video_path, frames_csv_path, raw_csv_path, pose_json_path, output_dir="metadata_synchronized_overlay"):
-    """Create overlay video using actual frame timestamps for perfect synchronization"""
+def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path, output_dir="complete_kinematics_overlay"):
+    """Create complete overlay video with kinematics analysis and force data"""
+    print("🎬 Creating Complete Kinematics Overlay")
+    print("=" * 60)
+    
     os.makedirs(output_dir, exist_ok=True)
     
-    # Load data
+    # Step 1: Run kinematics analysis on the video
+    print("\n📊 Step 1: Running Kinematics Analysis")
+    pose_json_path = run_kinematics_analysis(video_path, output_dir)
+    if not pose_json_path:
+        print("❌ Kinematics analysis failed")
+        return
+    
+    # Step 2: Load all data
+    print("\n📊 Step 2: Loading Data")
     frame_timestamps = load_frame_timestamps(frames_csv_path)
     combined_strokes = load_and_combine_force_data(raw_csv_path)
-    pose_data = load_pose_data(pose_json_path)
+    
+    with open(pose_json_path, 'r') as f:
+        pose_data = json.load(f)
+    print(f"📊 Loaded {len(pose_data)} pose frames from kinematics analysis")
     
     if not frame_timestamps or not combined_strokes or not pose_data:
         print("❌ Missing required data. Cannot create overlay video.")
         return
+    
+    # Step 3: Create overlay video
+    print("\n🎬 Step 3: Creating Overlay Video")
     
     # Open video
     cap = cv2.VideoCapture(video_path)
@@ -538,12 +621,12 @@ def create_metadata_synchronized_overlay_video(video_path, frames_csv_path, raw_
     
     # Create output video
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = os.path.join(output_dir, f"metadata_synchronized_overlay_{timestamp}.mp4")
+    output_path = os.path.join(output_dir, f"complete_kinematics_overlay_{timestamp}.mp4")
     
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     
-    print(f"📊 Processing frames with METADATA SYNCHRONIZATION...")
+    print(f"📊 Processing frames with complete kinematics and force overlays...")
     
     frame_count = 0
     overlays_added = 0
@@ -572,14 +655,6 @@ def create_metadata_synchronized_overlay_video(video_path, frames_csv_path, raw_
             if angles_display is not None:
                 overlay_display(frame, angles_display, 10, 10)
                 overlays_added += 1
-            
-            # Create angle trend chart
-            angle_chart = create_angle_trend_chart(frame_count, pose_data)
-            if angle_chart is not None:
-                ch, cw = angle_chart.shape[:2]
-                cx = max(0, width - cw - 10)
-                cy = max(0, height - ch - 10)
-                overlay_display(frame, angle_chart, cx, cy)
             
             # Draw joint angles and skeleton directly on the video frame
             draw_joint_angles_on_frame(frame, pose_frame)
@@ -627,28 +702,28 @@ def create_metadata_synchronized_overlay_video(video_path, frames_csv_path, raw_
     cap.release()
     out.release()
     
-    print(f"\n🎉 Metadata synchronized overlay video complete!")
+    print(f"\n🎉 Complete kinematics overlay video created!")
     print(f"   📹 Output video: {output_path}")
     print(f"   📊 Total frames: {frame_count}")
     print(f"   📈 Overlays added: {overlays_added}")
     print(f"   📊 Overlay rate: {(overlays_added/frame_count)*100:.1f}%")
     print(f"   🔋 Force plot overlays: {force_overlays}")
     print(f"   📊 Force overlay rate: {(force_overlays/frame_count)*100:.1f}%")
+    print(f"   🤖 Pose data from: {pose_json_path}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Create metadata synchronized overlay video")
+    parser = argparse.ArgumentParser(description="Create complete kinematics overlay with force data")
     parser.add_argument("--video", required=True, help="Path to video file")
     parser.add_argument("--frames-csv", required=True, help="Path to frames CSV file with timestamps")
     parser.add_argument("--raw-csv", required=True, help="Path to raw CSV file")
-    parser.add_argument("--pose-json", required=True, help="Path to pose analysis JSON file")
-    parser.add_argument("--output-dir", default="metadata_synchronized_overlay", help="Output directory")
+    parser.add_argument("--output-dir", default="complete_kinematics_overlay", help="Output directory")
     
     args = parser.parse_args()
     
-    print("🎬 Creating Metadata Synchronized Overlay Video")
+    print("🚣‍♂️ Complete Kinematics Overlay with Force Data")
     print("=" * 60)
     
-    create_metadata_synchronized_overlay_video(args.video, args.frames_csv, args.raw_csv, args.pose_json, args.output_dir)
+    create_complete_kinematics_overlay(args.video, args.frames_csv, args.raw_csv, args.output_dir)
 
 if __name__ == "__main__":
     main()
