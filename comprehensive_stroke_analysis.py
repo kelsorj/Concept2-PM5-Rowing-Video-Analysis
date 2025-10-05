@@ -891,8 +891,56 @@ class ComprehensiveStrokeAnalysis:
         drive_dur = (drive_end - drive_start).total_seconds() if (drive_end and drive_start) else None
         sep_lb = float(np.clip(((back_peak_t - legs_peak_t).total_seconds() / drive_dur) * 100.0, 0.0, 100.0)) if (drive_dur and legs_peak_t and back_peak_t) else None
         sep_ba = float(np.clip(((arms_peak_t - back_peak_t).total_seconds() / drive_dur) * 100.0, 0.0, 100.0)) if (drive_dur and back_peak_t and arms_peak_t) else None
-        stroke_dur = stroke.get('stroke_duration')
-        drive_ratio = float(np.clip(drive_dur / stroke_dur * 100.0, 0.0, 100.0)) if (stroke_dur and drive_dur) else None
+        
+        # Calculate stroke duration consistently using kinematic boundaries if available
+        if 'catch_dt' in locals() and 'finish_dt' in locals():
+            # Use kinematic-based timing: from catch to next catch (estimate recovery as ~2x drive)
+            # Or better: find the actual next catch in the data
+            # For now, use a typical stroke ratio: if drive is X seconds, recovery is ~2X seconds
+            # So total stroke = drive + recovery ≈ drive + (2 * drive) = 3 * drive
+            # But this is just an estimate. Better: use the time from this catch to the next stroke's catch
+            
+            # Try to find the next stroke's catch time
+            next_stroke_catch = None
+            if stroke_number < len(combined_strokes):
+                # There's a next stroke - find its catch
+                next_stroke = combined_strokes[stroke_number]  # stroke_number is 1-indexed, list is 0-indexed
+                next_stroke_start_expanded = next_stroke['start_timestamp_dt'] - pd.Timedelta(seconds=0.7)
+                next_stroke_end_expanded = next_stroke['end_timestamp_dt'] + pd.Timedelta(seconds=0.3)
+                
+                next_window_frames = []
+                next_window_hip_x = []
+                for item in mapped_frames:
+                    if next_stroke_start_expanded <= item['ts'] <= next_stroke_end_expanded:
+                        fr = item['frame']
+                        left_hip_x = fr.get('left_hip_x')
+                        right_hip_x = fr.get('right_hip_x')
+                        left_conf = fr.get('left_hip_confidence', 0)
+                        right_conf = fr.get('right_hip_confidence', 0)
+                        if left_hip_x is not None and right_hip_x is not None and left_conf > 0.5 and right_conf > 0.5:
+                            next_window_frames.append(item)
+                            next_window_hip_x.append((left_hip_x + right_hip_x) / 2.0)
+                
+                if len(next_window_frames) >= 5:
+                    from scipy.ndimage import gaussian_filter1d
+                    next_smoothed = gaussian_filter1d(np.array(next_window_hip_x), sigma=0.8)
+                    next_drive_direction = 'left' if next_window_hip_x[0] > next_window_hip_x[-1] else 'right'
+                    search_end = int(len(next_smoothed) * 0.6)
+                    if next_drive_direction == 'left':
+                        next_catch_idx = int(np.argmax(next_smoothed[:search_end]))
+                    else:
+                        next_catch_idx = int(np.argmin(next_smoothed[:search_end]))
+                    next_stroke_catch = next_window_frames[next_catch_idx]['ts']
+            
+            if next_stroke_catch:
+                stroke_dur = (next_stroke_catch - catch_dt).total_seconds()
+            else:
+                # Fallback: estimate stroke duration from PM5 data
+                stroke_dur = stroke.get('stroke_duration')
+        else:
+            stroke_dur = stroke.get('stroke_duration')
+        
+        drive_ratio = float(np.clip(drive_dur / stroke_dur * 100.0, 0.0, 100.0)) if (stroke_dur and drive_dur and stroke_dur > 0) else None
 
         def fmt(v):
             return f"{v:.0f}" if isinstance(v, (int,float)) and v is not None else "N/A"
