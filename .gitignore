@@ -3,3 +3,4 @@ advanced_analysis/*
 analysis*
 archiveCode*
 .DS_Store
+__pycache__/*

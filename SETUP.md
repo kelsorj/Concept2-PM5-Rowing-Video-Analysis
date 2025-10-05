@@ -353,6 +353,78 @@ rowingIA/
 5. **Run analysis**: `python create_complete_kinematics_overlay.py --session-dir py3rowcap_YYYYMMDD_HHMMSS`
 6. **Review results** in the generated overlay video and report
 
+## 📸 Combined Frames Generator
+
+After running your analysis, you can generate combined frame visualizations for each stroke using the `simple_combined_frames.py` script.
+
+### What It Does
+
+The combined frames generator creates a single visualization for each stroke that shows:
+- **6 key video frames** from each stroke (representing different phases)
+- **Angle measurements overlaid** on each frame
+- **Phase labels** (Catch, Drive Start, Drive Mid, Drive End, Recovery, Finish)
+- **Frame numbers** and timestamps
+
+### Usage
+
+```bash
+# Generate combined frames for all strokes
+python simple_combined_frames.py analysis_py3rowcap_20251004_123520
+```
+
+### Output
+
+The script creates a `combined_frames` folder inside your analysis directory:
+```
+analysis_py3rowcap_20251004_123520/
+├── combined_frames/
+│   ├── stroke_01_combined_frames.png
+│   ├── stroke_02_combined_frames.png
+│   ├── stroke_03_combined_frames.png
+│   └── ...
+├── rowing_analysis_data_*.csv
+├── pose_data_*.json
+└── complete_kinematics_overlay_*.mp4
+```
+
+### What's Displayed
+
+#### Angle Measurements
+- **L Arm**: Left arm angle
+- **R Arm**: Right arm angle  
+- **L Leg**: Left leg angle
+- **R Leg**: Right leg angle
+- **Back**: Back vertical angle
+- **L Ankle**: Left ankle vertical angle
+- **R Ankle**: Right ankle vertical angle
+
+#### Phase Labels
+- **Catch**: Beginning of stroke
+- **Drive Start**: Start of power phase
+- **Drive Mid**: Middle of drive
+- **Drive End**: End of drive phase
+- **Recovery**: Recovery phase
+- **Finish**: End of stroke
+
+### Example Workflow
+
+1. **Run your analysis**:
+   ```bash
+   python create_complete_kinematics_overlay.py --video your_video.mp4
+   ```
+
+2. **Generate combined frames**:
+   ```bash
+   python simple_combined_frames.py analysis_py3rowcap_20251004_123520
+   ```
+
+3. **View results**:
+   ```bash
+   open analysis_py3rowcap_20251004_123520/combined_frames/stroke_01_combined_frames.png
+   ```
+
+Perfect for coaching and technique analysis! 🚣‍♂️
+
 ## Final Support
 
 For issues or questions:
