@@ -123,23 +123,6 @@ pip install ultralytics
 - Ensure good camera positioning
 - Use consistent lighting
 
-## Usage
-
-Once installed, follow the main instructions in `instructions.md`:
-
-1. **Capture data**: `sudo python py3row_usb_video_capture.py`
-2. **Analyze**: `python create_complete_kinematics_overlay.py --session-dir py3rowcap_YYYYMMDD_HHMMSS`
-
-## Support
-
-For issues:
-1. Check this setup guide
-2. Verify all requirements are installed
-3. Ensure PM5 is properly connected
-4. Check camera permissions and lighting
-
----
-
 # Complete Usage Instructions
 
 ## Overview
@@ -161,8 +144,21 @@ This system provides comprehensive biomechanical analysis of rowing technique by
 
 ### 1.2 Run Capture Script
 ```bash
+# Standard capture at 30 FPS (default)
 sudo python py3row_usb_video_capture.py
+
+# High frame rate capture for detailed analysis
+sudo python py3row_usb_video_capture.py --fps 60
+
+# Custom frame rate (e.g., 24 FPS for slower processing)
+sudo python py3row_usb_video_capture.py --fps 24
 ```
+
+**Frame Rate Options:**
+- **30 FPS (default)**: Good balance of detail and processing speed
+- **60 FPS**: Higher detail for precise biomechanical analysis (larger files, longer processing)
+- **24 FPS**: Faster processing, good for longer sessions
+- **15 FPS**: Fastest processing, basic analysis
 
 **Important Notes:**
 - The script will create a timestamped directory (e.g., `py3rowcap_20251004_123520/`)
@@ -274,7 +270,7 @@ The detailed CSV contains:
 ### 4.1 Common Issues
 
 **No Force Data Captured:**
-- Ensure PM5 is in a workout mode (not just displaying)
+- Ensure PM5 is in a "just row" mode (not just on), sometimes I've had to go back to menu and back into "just row"
 - Check USB connection
 - Verify PM5 is actively rowing (not just sitting idle)
 
@@ -355,10 +351,14 @@ rowingIA/
 
 1. **Install dependencies**: `pip install -r requirements.txt`
 2. **Connect PM5** via USB and start a workout
-3. **Run capture**: `sudo python py3row_usb_video_capture.py`
+3. **Run capture**: `sudo python py3row_usb_video_capture.py` (or `--fps 60` for higher detail)
 4. **Row for 2-5 minutes** then stop capture
-5. **Run analysis**: `python create_complete_kinematics_overlay.py --session-dir py3rowcap_YYYYMMDD_HHMMSS`
-6. **Review results** in the generated overlay video and report
+5. **Run comprehensive analysis**: `python comprehensive_stroke_analysis.py analysis_py3rowcap_YYYYMMDD_HHMMSS`
+6. **Review results**:
+   - **Overlay video**: `complete_kinematics_overlay_*.mp4`
+   - **Comprehensive reports**: `comprehensive_analyses/stroke_*_comprehensive_analysis.png`
+   - **3D visualizations**: `3d_animations/interactive_axis_dashboard.html`
+   - **Session summary**: `session_summary.png`
 
 ## 📸 Combined Frames Generator
 
@@ -478,6 +478,117 @@ The bottom section shows the ideal rowing sequence:
 - **Metrics table row**: Finish/Catch/Sequence values rendered under the plot (new)
 
 This provides the most complete analysis for coaching and technique improvement! 🚣‍♂️
+
+## 🎬 3D Biomechanical Visualizations
+
+For advanced 3D analysis of rowing biomechanics, the system now includes interactive 3D visualizations that show stroke patterns in three-dimensional space.
+
+### What It Does
+
+The 3D visualization system creates:
+- **Individual stroke animations** - Animated 3D plots showing each stroke's biomechanical path
+- **Combined stroke analysis** - All strokes overlaid in a single 3D plot for comparison
+- **Interactive axis dashboard** - Choose which angles to display on X, Y, and Z axes
+
+### Usage
+
+#### Option 1: Generate All 3D Visualizations (Recommended)
+```bash
+# This creates ALL visualizations in one command:
+# - Individual stroke animations
+# - Combined stroke analysis  
+# - Interactive axis dashboard
+python comprehensive_stroke_analysis.py analysis_py3rowcap_YYYYMMDD_HHMMSS
+```
+
+#### Option 2: Use Standalone 3D Tool
+```bash
+# Generate individual stroke animations
+python create_3d_stroke_animation.py analysis_py3rowcap_YYYYMMDD_HHMMSS
+
+# Generate combined analysis (all strokes in one plot)
+python create_3d_stroke_animation.py analysis_py3rowcap_YYYYMMDD_HHMMSS --combined
+
+# Generate interactive dashboard with axis selection
+python create_3d_stroke_animation.py analysis_py3rowcap_YYYYMMDD_HHMMSS --interactive
+
+# Generate animation for specific stroke only
+python create_3d_stroke_animation.py analysis_py3rowcap_YYYYMMDD_HHMMSS --stroke 2
+```
+
+### Output
+
+The 3D visualizations create a `3d_animations` folder:
+```
+analysis_py3rowcap_YYYYMMDD_HHMMSS/
+├── 3d_animations/
+│   ├── stroke_01_3d_animation.html      # Individual stroke animations
+│   ├── stroke_02_3d_animation.html
+│   ├── ...
+│   ├── combined_stroke_analysis.html    # All strokes combined
+│   └── interactive_axis_dashboard.html  # Interactive axis selector
+├── comprehensive_analyses/
+├── rowing_analysis_data_*.csv
+└── pose_data_*.json
+```
+
+### 3D Visualization Features
+
+#### Individual Stroke Animations
+- **Animated 3D path** showing the stroke's biomechanical trajectory
+- **Force color coding** - Color represents force (Newtons) at each point
+- **Play/Pause controls** and time slider
+- **Fixed axis ranges** for consistent viewing
+- **Trail effect** showing the path taken so far
+
+#### Combined Stroke Analysis
+- **All strokes overlaid** in a single 3D plot
+- **Different colors** for each stroke
+- **Force color coding** across all strokes
+- **Legend** showing stroke numbers
+- **Fixed axis ranges** for easy comparison
+
+#### Interactive Axis Dashboard
+- **Radio button controls** to select which angle goes on each axis
+- **Available angles**: Leg, Back, Arm (averaged and individual left/right)
+- **Real-time updates** when changing axis selections
+- **3D scatter plot** with force color coding
+- **Hover information** showing exact values
+
+### Axis Options
+
+The interactive dashboard allows you to choose from:
+- **Leg Angle (avg)** - Average of left and right leg angles
+- **Back Angle** - Torso lean relative to vertical
+- **Arm Angle (avg)** - Average of left and right arm angles
+- **Left/Right Leg Angle** - Individual leg measurements
+- **Left/Right Arm Angle** - Individual arm measurements
+
+### Example Workflow
+
+1. **Run comprehensive analysis** (includes 3D visualizations):
+   ```bash
+   python comprehensive_stroke_analysis.py analysis_py3rowcap_20251004_123520
+   ```
+
+2. **Open the interactive dashboard**:
+   ```bash
+   open analysis_py3rowcap_20251004_123520/3d_animations/interactive_axis_dashboard.html
+   ```
+
+3. **Experiment with different axis combinations**:
+   - Try "Left Leg Angle" vs "Right Leg Angle" vs "Back Angle" to see asymmetry
+   - Use "Leg Angle" vs "Back Angle" vs "Arm Angle" for classic sequence analysis
+   - Compare individual vs averaged measurements
+
+### Performance Notes
+
+- **Processing time**: 3D visualizations add ~30-60 seconds to analysis time
+- **File sizes**: HTML files are typically 1-5 MB each
+- **Browser compatibility**: Works best in Chrome, Firefox, Safari
+- **Interactive performance**: Smooth on modern computers, may be slower on older devices
+
+Perfect for advanced biomechanical analysis and coaching! 🚣‍♂️
 
 ## Final Support
 
