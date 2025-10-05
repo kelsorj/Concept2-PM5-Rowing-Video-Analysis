@@ -10,6 +10,7 @@ import numpy as np
 import os
 import json
 import glob
+import csv
 from datetime import datetime
 import matplotlib.pyplot as plt
 import argparse
@@ -67,11 +68,114 @@ class ComprehensiveStrokeAnalysis:
         
         print(f"🎥 Found video: {video_path}")
         
+        # Load force data from the original capture directory
+        # The analysis directory name should match the original capture directory
+        analysis_name = os.path.basename(analysis_dir)
+        if analysis_name.startswith('analysis_'):
+            original_name = analysis_name[9:]  # Remove 'analysis_' prefix
+            original_dir = os.path.join(os.getcwd(), original_name)
+            raw_csv_files = glob.glob(os.path.join(original_dir, "*_raw.csv"))
+        
+        # Also check in the analysis directory itself
+        if not raw_csv_files:
+            raw_csv_files = glob.glob(os.path.join(analysis_dir, "*_raw.csv"))
+        
+        combined_strokes = None
+        if raw_csv_files:
+            print(f"📊 Loading force data from: {raw_csv_files[0]}")
+            combined_strokes = self.load_and_combine_force_data(raw_csv_files[0])
+        else:
+            print("⚠️  No force data found - will use theoretical curves")
+        
         return {
             'dataframe': df,
             'video_path': video_path,
-            'directory': analysis_dir
+            'directory': analysis_dir,
+            'combined_strokes': combined_strokes
         }
+    
+    def load_and_combine_force_data(self, raw_csv_path):
+        """Load raw force data and combine Drive + Dwelling measurements into complete strokes"""
+        print(f"📊 Loading and combining force data: {raw_csv_path}")
+        
+        all_data = []
+        with open(raw_csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    raw_json = json.loads(row['raw_json'])
+                    all_data.append({
+                        'timestamp_ns': int(row['ts_ns']),
+                        'timestamp_iso': row['ts_iso'],
+                        'timestamp_dt': datetime.fromisoformat(row['ts_iso']),
+                        'elapsed_s': raw_json.get('time', 0.0),
+                        'distance_m': raw_json.get('distance', 0.0),
+                        'spm': raw_json.get('spm', 0),
+                        'power': raw_json.get('power', 0),
+                        'pace': raw_json.get('pace', 0.0),
+                        'forceplot': raw_json.get('forceplot', []),
+                        'strokestate': raw_json.get('strokestate', ''),
+                        'status': raw_json.get('status', '')
+                    })
+                except (json.JSONDecodeError, KeyError, ValueError) as e:
+                    continue
+        
+        print(f"   Loaded {len(all_data)} total data points")
+        
+        # Combine Drive + Dwelling measurements into complete strokes
+        combined_strokes = []
+        current_stroke = None
+        
+        for i, data_point in enumerate(all_data):
+            if data_point['strokestate'] in ['Drive', 'Dwelling'] and data_point['forceplot']:
+                if current_stroke is None:
+                    # Start a new stroke
+                    current_stroke = {
+                        'start_timestamp_dt': data_point['timestamp_dt'],
+                        'start_elapsed_s': data_point['elapsed_s'],
+                        'combined_forceplot': data_point['forceplot'].copy(),
+                        'measurements': [data_point],
+                        'final_power': data_point['power'],
+                        'final_spm': data_point['spm'],
+                        'final_distance': data_point['distance_m'],
+                        'stroke_phases': [data_point['strokestate']]
+                    }
+                else:
+                    # Continue the current stroke - append forceplot data
+                    current_stroke['combined_forceplot'].extend(data_point['forceplot'])
+                    current_stroke['measurements'].append(data_point)
+                    current_stroke['final_power'] = data_point['power']
+                    current_stroke['final_spm'] = data_point['spm']
+                    current_stroke['final_distance'] = data_point['distance_m']
+                    current_stroke['stroke_phases'].append(data_point['strokestate'])
+            
+            elif current_stroke is not None and data_point['strokestate'] == 'Recovery':
+                # End of current stroke - save it
+                current_stroke['end_timestamp_dt'] = data_point['timestamp_dt']
+                current_stroke['end_elapsed_s'] = data_point['elapsed_s']
+                current_stroke['stroke_duration'] = current_stroke['end_elapsed_s'] - current_stroke['start_elapsed_s']
+                combined_strokes.append(current_stroke)
+                current_stroke = None
+        
+        # Don't forget the last stroke if it doesn't end with Recovery
+        if current_stroke is not None:
+            current_stroke['end_timestamp_dt'] = all_data[-1]['timestamp_dt']
+            current_stroke['end_elapsed_s'] = all_data[-1]['elapsed_s']
+            current_stroke['stroke_duration'] = current_stroke['end_elapsed_s'] - current_stroke['start_elapsed_s']
+            combined_strokes.append(current_stroke)
+        
+        print(f"   Combined into {len(combined_strokes)} complete strokes")
+        
+        # Print stroke summary with timing info
+        for i, stroke in enumerate(combined_strokes):
+            phases = " -> ".join(stroke['stroke_phases'])
+            start_time = stroke['start_timestamp_dt'].strftime('%H:%M:%S.%f')[:-3]
+            end_time = stroke['end_timestamp_dt'].strftime('%H:%M:%S.%f')[:-3]
+            print(f"   Stroke {i+1}: {len(stroke['combined_forceplot'])} force points, "
+                  f"{stroke['stroke_duration']:.2f}s duration, Peak: {max(stroke['combined_forceplot'])}, "
+                  f"Time: {start_time} - {end_time}, Phases: {phases}")
+        
+        return combined_strokes
     
     def extract_key_frames_for_stroke(self, data, stroke_number, num_frames=6):
         """Extract key frames representing different phases of a stroke"""
@@ -162,13 +266,36 @@ class ComprehensiveStrokeAnalysis:
         
         return overlay_frame
     
-    def calculate_stroke_sequence_data(self, stroke_data):
+    def calculate_stroke_sequence_data(self, stroke_data, stroke_number, combined_strokes):
         """Calculate speed and sequence data for stroke timing analysis"""
         # Get all frames for this stroke
         df = stroke_data['data']
         
-        # Create time axis (0 to 1 representing full stroke cycle)
-        time_axis = np.linspace(0, 1, len(df))
+        # Get the actual stroke timing from combined_strokes
+        stroke_start_time = None
+        stroke_end_time = None
+        stroke_force_data = None
+        
+        if combined_strokes and stroke_number <= len(combined_strokes):
+            stroke_info = combined_strokes[stroke_number - 1]
+            stroke_start_time = stroke_info['start_timestamp_dt']
+            stroke_end_time = stroke_info['end_timestamp_dt']
+            stroke_force_data = stroke_info['combined_forceplot']
+        
+        # Create time axis based on actual timestamps
+        if 'timestamp' in df.columns:
+            # Convert timestamps to relative time within stroke (0 to 1)
+            timestamps = pd.to_datetime(df['timestamp'])
+            if stroke_start_time and stroke_end_time:
+                stroke_duration = (stroke_end_time - stroke_start_time).total_seconds()
+                time_axis = [(ts - stroke_start_time).total_seconds() / stroke_duration for ts in timestamps]
+                time_axis = np.array(time_axis)
+            else:
+                # Fallback to linear time axis
+                time_axis = np.linspace(0, 1, len(df))
+        else:
+            # Fallback to linear time axis
+            time_axis = np.linspace(0, 1, len(df))
         
         # Create dramatic, realistic rowing curves based on biomechanics
         # These should show the actual motion patterns of rowing
@@ -210,16 +337,37 @@ class ComprehensiveStrokeAnalysis:
         recovery_curve = np.exp(-((time_axis[recovery_mask] - 0.6) / 0.08) ** 2)
         arm_contribution[recovery_mask] = -recovery_curve * 0.7  # Higher negative contribution
         
-        # Handle: Combined effort, peaks in middle of drive
+        # Handle: Use actual force data mapped by timestamps
         handle_contribution = np.zeros_like(time_axis)
         
-        # Drive phase: Handle force
-        handle_curve = np.exp(-((time_axis[drive_mask] - 0.3) / 0.15) ** 2)
-        handle_contribution[drive_mask] = handle_curve * 0.8  # High positive contribution
-        
-        # Recovery phase: Handle return (negative)
-        recovery_curve = np.exp(-((time_axis[recovery_mask] - 0.65) / 0.1) ** 2)
-        handle_contribution[recovery_mask] = -recovery_curve * 0.5  # Negative contribution
+        if stroke_force_data and len(stroke_force_data) > 0 and stroke_start_time and stroke_end_time:
+            # Map force data to video frames using timestamps
+            max_force = max(stroke_force_data)
+            if max_force > 0:
+                # Force data from PM5 only represents the drive phase
+                # Map it to the drive phase (0 to 0.5) of our time axis
+                drive_force_points = len(stroke_force_data)
+                drive_time_axis = np.linspace(0, 0.5, drive_force_points)
+                
+                # Normalize force data
+                normalized_force = np.array(stroke_force_data) / max_force
+                
+                # Interpolate force data to the drive phase only
+                drive_force = np.interp(time_axis[drive_mask], drive_time_axis, normalized_force)
+                handle_contribution[drive_mask] = drive_force
+                
+                # Recovery phase should have zero force
+                handle_contribution[recovery_mask] = 0.0
+            else:
+                handle_contribution = np.zeros_like(time_axis)
+        else:
+            # Fallback to theoretical handle curve
+            handle_curve = np.exp(-((time_axis[drive_mask] - 0.3) / 0.15) ** 2)
+            handle_contribution[drive_mask] = handle_curve * 0.8  # High positive contribution
+            
+            # Recovery phase: Handle return (negative)
+            recovery_curve = np.exp(-((time_axis[recovery_mask] - 0.65) / 0.1) ** 2)
+            handle_contribution[recovery_mask] = -recovery_curve * 0.5  # Negative contribution
         
         return {
             'time': time_axis,
@@ -365,8 +513,8 @@ class ComprehensiveStrokeAnalysis:
         ax.plot(time, sequence_data['arms'], color='magenta', linewidth=4, label='Arms')
         ax.plot(time, sequence_data['arms'], color='magenta', linewidth=2, alpha=0.3)
         
-        # Handle (dotted black line)
-        ax.plot(time, sequence_data['handle'], color='black', linestyle='--', linewidth=3, label='Handle')
+        # Handle (dotted black line) - shows actual force data
+        ax.plot(time, sequence_data['handle'], color='black', linestyle='--', linewidth=3, label='Force (PM5)')
         
         # Add prominent zero line
         ax.axhline(y=0, color='black', linestyle='-', linewidth=2, alpha=0.8)
@@ -438,7 +586,7 @@ class ComprehensiveStrokeAnalysis:
         # Calculate sequence data
         stroke_data = data['dataframe'][data['dataframe']['stroke_number'] == stroke_number]
         if len(stroke_data) > 0:
-            sequence_data = self.calculate_stroke_sequence_data({'data': stroke_data})
+            sequence_data = self.calculate_stroke_sequence_data({'data': stroke_data}, stroke_number, data.get('combined_strokes'))
             
             # Create comprehensive analysis
             comprehensive_path = os.path.join(output_dir, f"stroke_{stroke_number:02d}_comprehensive_analysis.png")
