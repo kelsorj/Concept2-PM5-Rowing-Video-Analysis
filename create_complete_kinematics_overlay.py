@@ -532,8 +532,8 @@ def create_animated_force_curve_plot(force_curve, power, spm, current_idx=None, 
     if not force_curve:
         return None
 
-    # Use smaller size for video overlay
-    fig, ax = plt.subplots(figsize=(4, 3), dpi=100)
+    # Use smaller size for video overlay (25% smaller than before)
+    fig, ax = plt.subplots(figsize=(3, 2.25), dpi=100)
     fig.patch.set_facecolor('black')
     ax.set_facecolor('black')
 
@@ -614,23 +614,48 @@ def create_enhanced_joint_angles_display(pose_frame, frame_num, elapsed_s):
     
     return img
 
-def draw_joint_angles_on_frame(frame, pose_frame):
-    """Draw angles at the elbow, knee, hip (and torso lean) directly on the video frame."""
-    if not pose_frame:
+def draw_smoothed_skeleton_and_angles(frame, keypoints):
+    """Draw smoothed skeleton and joint angles directly on the video frame"""
+    if keypoints is None:
         return
     
-    # Helper to fetch a keypoint triplet
-    def get_kpt(name):
-        x_key, y_key, c_key = f"{name}_x", f"{name}_y", f"{name}_confidence"
-        if x_key in pose_frame and y_key in pose_frame and c_key in pose_frame:
-            conf = pose_frame.get(c_key, 0)
-            if conf is None:
-                conf = 0
-            if conf > 0.5:
-                return (int(pose_frame[x_key]), int(pose_frame[y_key]))
-        return None
-
+    def draw_skeleton(keypoints, color, thickness=3):
+        """Draw skeleton from keypoints"""
+        if keypoints is None:
+            return
+        
+        # Define skeleton connections (COCO format)
+        skeleton = [
+            (5, 6),   # shoulders
+            (5, 7), (7, 9),   # left arm
+            (6, 8), (8, 10),  # right arm
+            (5, 11), (6, 12), # torso
+            (11, 12), # hips
+            (11, 13), (13, 15), # left leg
+            (12, 14), (14, 16), # right leg
+        ]
+        
+        for start_idx, end_idx in skeleton:
+            if (start_idx < len(keypoints) and end_idx < len(keypoints) and
+                keypoints[start_idx, 2] > 0.5 and keypoints[end_idx, 2] > 0.5):
+                
+                start_point = (int(keypoints[start_idx, 0]), int(keypoints[start_idx, 1]))
+                end_point = (int(keypoints[end_idx, 0]), int(keypoints[end_idx, 1]))
+                
+                cv2.line(frame, start_point, end_point, color, thickness)
+    
+    def draw_keypoints(keypoints, color, radius=6):
+        """Draw keypoints as circles"""
+        if keypoints is None:
+            return
+        
+        for i, kpt in enumerate(keypoints):
+            if kpt[2] > 0.5:  # confidence > 0.5
+                center = (int(kpt[0]), int(kpt[1]))
+                cv2.circle(frame, center, radius, color, -1)
+    
     def calc_angle(p1, p2, p3):
+        """Calculate angle between three points"""
         if p1 is None or p2 is None or p3 is None:
             return None
         a = np.array(p1, dtype=np.float32)
@@ -643,16 +668,9 @@ def draw_joint_angles_on_frame(frame, pose_frame):
             return None
         cosang = np.clip(np.dot(v1, v2) / denom, -1.0, 1.0)
         return float(np.degrees(np.arccos(cosang)))
-
-    def draw_segment(p, q, color, thickness=3):
-        if p is not None and q is not None:
-            cv2.line(frame, p, q, color, thickness)
-
-    def draw_kpt(p, color):
-        if p is not None:
-            cv2.circle(frame, p, 6, color, -1)
-
+    
     def draw_badge(p, text, bg_color, text_color=(0, 0, 0)):
+        """Draw angle badge at keypoint"""
         if p is None:
             return
         x, y = p
@@ -667,71 +685,7 @@ def draw_joint_angles_on_frame(frame, pose_frame):
         cv2.rectangle(frame, (x1, y1), (x2, y2), bg_color, -1)
         cv2.rectangle(frame, (x1, y1), (x2, y2), (50,50,50), 1)
         cv2.putText(frame, text, (x1 + pad, y2 - pad - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
-
-    # Collect keypoints we care about
-    ls = get_kpt('left_shoulder')
-    rs = get_kpt('right_shoulder')
-    le = get_kpt('left_elbow')
-    re = get_kpt('right_elbow')
-    lw = get_kpt('left_wrist')
-    rw = get_kpt('right_wrist')
-    lh = get_kpt('left_hip')
-    rh = get_kpt('right_hip')
-    lk = get_kpt('left_knee')
-    rk = get_kpt('right_knee')
-    la = get_kpt('left_ankle')
-    ra = get_kpt('right_ankle')
-
-    # Colors (BGR)
-    color_arm = (0, 255, 255)   # yellow
-    color_leg = (255, 153, 0)   # orange
-    color_left = (0, 255, 0)    # green for left joint dot
-    color_right = (255, 0, 0)   # red for right joint dot
-
-    # Draw simple skeleton segments for context
-    draw_segment(ls, le, color_arm)
-    draw_segment(le, lw, color_arm)
-    draw_segment(rs, re, color_arm)
-    draw_segment(re, rw, color_arm)
-    draw_segment(lh, lk, color_leg)
-    draw_segment(lk, la, color_leg)
-    draw_segment(rh, rk, color_leg)
-    draw_segment(rk, ra, color_leg)
-    draw_segment(ls, lh, (200,200,200))
-    draw_segment(rs, rh, (200,200,200))
-    draw_segment(lh, rh, (200,200,200))
-
-    # Draw keypoints
-    for p, col in [(le, color_left), (re, color_right), (lk, color_left), (rk, color_right), (lh, (255,255,255))]:
-        draw_kpt(p, col)
-
-    # Compute angles and draw badges at the vertex
-    ang_left_elbow = calc_angle(ls, le, lw)
-    if ang_left_elbow is not None:
-        draw_badge(le, f"{ang_left_elbow:.0f}", (0, 255, 255))
-
-    ang_right_elbow = calc_angle(rs, re, rw)
-    if ang_right_elbow is not None:
-        draw_badge(re, f"{ang_right_elbow:.0f}", (0, 255, 255))
-
-    ang_left_knee = calc_angle(lh, lk, la)
-    if ang_left_knee is not None:
-        draw_badge(lk, f"{ang_left_knee:.0f}", (255, 200, 0))
-
-    ang_right_knee = calc_angle(rh, rk, ra)
-    if ang_right_knee is not None:
-        draw_badge(rk, f"{ang_right_knee:.0f}", (255, 200, 0))
-
-    # Hip angle (shoulder-hip-knee) — draw at hip
-    ang_left_hip = calc_angle(ls, lh, lk)
-    if ang_left_hip is not None:
-        draw_badge(lh, f"{ang_left_hip:.0f}", (200, 200, 200))
-
-    ang_right_hip = calc_angle(rs, rh, rk)
-    if ang_right_hip is not None:
-        draw_badge(rh, f"{ang_right_hip:.0f}", (200, 200, 200))
-
-    # Ankle angles relative to vertical
+    
     def calc_angle_to_vertical(p1, p2):
         """Calculate angle between line p1-p2 and vertical reference"""
         if p1 is None or p2 is None:
@@ -757,26 +711,100 @@ def draw_joint_angles_on_frame(frame, pose_frame):
         signed_angle = float(np.degrees(np.arctan2(cross_z, dot)))
         
         return signed_angle
+    
+    # Draw smoothed skeleton in green
+    draw_skeleton(keypoints, (0, 255, 0), 3)  # Green skeleton
+    
+    # Draw key joint points
+    draw_keypoints(keypoints, (255, 255, 255), 6)  # White keypoints
+    
+    # Calculate and draw joint angles
+    if len(keypoints) >= 17:  # Ensure we have all keypoints
+        # Get key joint positions (ensure integer coordinates)
+        ls = (int(keypoints[5, 0]), int(keypoints[5, 1])) if keypoints[5, 2] > 0.5 else None
+        rs = (int(keypoints[6, 0]), int(keypoints[6, 1])) if keypoints[6, 2] > 0.5 else None
+        le = (int(keypoints[7, 0]), int(keypoints[7, 1])) if keypoints[7, 2] > 0.5 else None
+        re = (int(keypoints[8, 0]), int(keypoints[8, 1])) if keypoints[8, 2] > 0.5 else None
+        lw = (int(keypoints[9, 0]), int(keypoints[9, 1])) if keypoints[9, 2] > 0.5 else None
+        rw = (int(keypoints[10, 0]), int(keypoints[10, 1])) if keypoints[10, 2] > 0.5 else None
+        lh = (int(keypoints[11, 0]), int(keypoints[11, 1])) if keypoints[11, 2] > 0.5 else None
+        rh = (int(keypoints[12, 0]), int(keypoints[12, 1])) if keypoints[12, 2] > 0.5 else None
+        lk = (int(keypoints[13, 0]), int(keypoints[13, 1])) if keypoints[13, 2] > 0.5 else None
+        rk = (int(keypoints[14, 0]), int(keypoints[14, 1])) if keypoints[14, 2] > 0.5 else None
+        la = (int(keypoints[15, 0]), int(keypoints[15, 1])) if keypoints[15, 2] > 0.5 else None
+        ra = (int(keypoints[16, 0]), int(keypoints[16, 1])) if keypoints[16, 2] > 0.5 else None
+        
+        # Draw elbow angles (yellow badges)
+        ang_left_elbow = calc_angle(ls, le, lw)
+        if ang_left_elbow is not None:
+            draw_badge(le, f"{ang_left_elbow:.0f}", (0, 255, 255))  # Yellow
+        
+        ang_right_elbow = calc_angle(rs, re, rw)
+        if ang_right_elbow is not None:
+            draw_badge(re, f"{ang_right_elbow:.0f}", (0, 255, 255))  # Yellow
+        
+        # Draw knee angles (orange badges)
+        ang_left_knee = calc_angle(lh, lk, la)
+        if ang_left_knee is not None:
+            draw_badge(lk, f"{ang_left_knee:.0f}", (255, 200, 0))  # Orange
+        
+        ang_right_knee = calc_angle(rh, rk, ra)
+        if ang_right_knee is not None:
+            draw_badge(rk, f"{ang_right_knee:.0f}", (255, 200, 0))  # Orange
+        
+        # Draw hip angles (gray badges)
+        ang_left_hip = calc_angle(ls, lh, lk)
+        if ang_left_hip is not None:
+            draw_badge(lh, f"{ang_left_hip:.0f}", (200, 200, 200))  # Gray
+        
+        ang_right_hip = calc_angle(rs, rh, rk)
+        if ang_right_hip is not None:
+            draw_badge(rh, f"{ang_right_hip:.0f}", (200, 200, 200))  # Gray
+        
+        # Draw ankle vertical angles (yellow badges)
+        if la is not None and lk is not None:
+            left_ankle_vertical = calc_angle_to_vertical(la, lk)
+            if left_ankle_vertical is not None:
+                draw_badge(la, f"{left_ankle_vertical:.0f}", (255, 255, 0))  # Yellow
+        
+        if ra is not None and rk is not None:
+            right_ankle_vertical = calc_angle_to_vertical(ra, rk)
+            if right_ankle_vertical is not None:
+                draw_badge(ra, f"{right_ankle_vertical:.0f}", (255, 255, 0))  # Yellow
+        
+        # Draw back vertical angle (green badge)
+        if ls is not None and rs is not None and lh is not None and rh is not None:
+            shoulder_center = (int((ls[0] + rs[0]) / 2), int((ls[1] + rs[1]) / 2))
+            hip_center = (int((lh[0] + rh[0]) / 2), int((lh[1] + rh[1]) / 2))
+            back_vertical = calc_angle_to_vertical(hip_center, shoulder_center)
+            if back_vertical is not None:
+                draw_badge(shoulder_center, f"{back_vertical:.0f}", (0, 255, 128))  # Green
 
-    # Left ankle angle relative to vertical
-    if la is not None and lk is not None:
-        left_ankle_vertical = calc_angle_to_vertical(la, lk)
-        if left_ankle_vertical is not None:
-            draw_badge(la, f"{left_ankle_vertical:.0f}", (255, 255, 0))
-
-    # Right ankle angle relative to vertical
-    if ra is not None and rk is not None:
-        right_ankle_vertical = calc_angle_to_vertical(ra, rk)
-        if right_ankle_vertical is not None:
-            draw_badge(ra, f"{right_ankle_vertical:.0f}", (255, 255, 0))
-
-    # Back angle relative to vertical
-    if ls is not None and rs is not None and lh is not None and rh is not None:
-        shoulder_center = (int((ls[0] + rs[0]) / 2), int((ls[1] + rs[1]) / 2))
-        hip_center = (int((lh[0] + rh[0]) / 2), int((lh[1] + rh[1]) / 2))
-        back_vertical = calc_angle_to_vertical(hip_center, shoulder_center)
-        if back_vertical is not None:
-            draw_badge(shoulder_center, f"{back_vertical:.0f}", (0, 255, 128))
+def draw_joint_angles_on_frame(frame, pose_frame):
+    """Legacy function - now redirects to smoothed skeleton drawing"""
+    # This function is kept for compatibility but now uses the smoothed approach
+    # Convert pose_frame back to keypoints format if needed
+    if not pose_frame:
+        return
+    
+    # Extract keypoints from pose_frame
+    keypoint_names = [
+        'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
+        'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+        'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
+        'left_knee', 'right_knee', 'left_ankle', 'right_ankle'
+    ]
+    
+    keypoints = np.zeros((17, 3))
+    for i, name in enumerate(keypoint_names):
+        x_key, y_key, c_key = f"{name}_x", f"{name}_y", f"{name}_confidence"
+        if x_key in pose_frame and y_key in pose_frame and c_key in pose_frame:
+            keypoints[i, 0] = pose_frame[x_key]
+            keypoints[i, 1] = pose_frame[y_key]
+            keypoints[i, 2] = pose_frame[c_key]
+    
+    # Use the new smoothed skeleton drawing
+    draw_smoothed_skeleton_and_angles(frame, keypoints)
 
 def overlay_display(frame, display, x_offset, y_offset):
     """Overlays a display image onto the video frame"""
@@ -1060,8 +1088,8 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
                 overlay_display(frame, angles_display, 10, 10)
                 overlays_added += 1
             
-            # Draw smoothed joint angles and skeleton directly on the video frame
-            draw_joint_angles_on_frame(frame, pose_analysis)
+            # Draw smoothed skeleton and angles directly on the video frame
+            draw_smoothed_skeleton_and_angles(frame, keypoints_to_use)
         
         # Find closest stroke for current frame timestamp
         closest_stroke, force_idx, stroke_num = find_closest_stroke_for_time(frame_timestamp, combined_strokes)
@@ -1091,6 +1119,10 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
             info_text += f" | Stroke #{stroke_num}"
         cv2.putText(frame, info_text, (10, height - 20), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        # Add smoothing legend
+        cv2.putText(frame, "Smoothed Skeleton", (width - 200, height - 20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
         # Write frame
         out.write(frame)
