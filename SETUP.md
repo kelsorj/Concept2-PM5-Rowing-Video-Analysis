@@ -209,7 +209,9 @@ python create_complete_kinematics_overlay.py --session-dir py3rowcap_YYYYMMDD_HH
 The analysis creates a new directory `analysis_py3rowcap_YYYYMMDD_HHMMSS/` with:
 - `complete_kinematics_overlay_YYYYMMDD_HHMMSS.mp4` - **Final overlay video**
 - `pose_data_YYYYMMDD_HHMMSS.json` - Pose estimation data
-- `rowing_analysis_report_YYYYMMDD_HHMMSS.txt` - **Comprehensive report**
+- `pm5_combined_strokes.json` - High-fidelity per-stroke force and timestamps (new)
+- `py3rowcap_YYYYMMDD_HHMMSS_raw.csv` - A copy of the original PM5 raw CSV (for portability)
+- `rowing_analysis_report_YYYYMMDD_HHMMSS.txt` - **Comprehensive report with coaching metrics** (new metrics)
 - `rowing_analysis_data_YYYYMMDD_HHMMSS.csv` - **Detailed CSV data**
 
 ## Step 3: Understanding the Results
@@ -242,6 +244,11 @@ The comprehensive report includes:
 **Stroke Summary:**
 - Duration, peak force, power, stroke rate for each stroke
 - Timing information and phase breakdown
+
+**Coaching Metrics (per stroke):**
+- Finish: layback angle, legs unbent, handle height at torso (%)
+- Catch: shins angle, forward body angle, elbows unbent
+- Sequence: Legs→Back separation %, Back→Arms separation %, Drive duration ratio %
 
 **Body Angle Statistics:**
 - Mean, standard deviation, min, max, range for each angle
@@ -465,8 +472,10 @@ The bottom section shows the ideal rowing sequence:
 - **Drive Phase**: Legs → Back → Arms (left side)
 - **Recovery Phase**: Arms → Back → Legs (right side)
 - **Colored lines**: Green (Legs), Blue (Back), Magenta (Arms), Black dotted (Handle)
+- **Force curve mapping**: Uses overlay-accurate mapping by default (matches PM5 overlay)
 - **Peak labels**: L, B, A markers show timing of maximum contribution
 - **Separation percentages**: Quantify how well movements are sequenced
+- **Metrics table row**: Finish/Catch/Sequence values rendered under the plot (new)
 
 This provides the most complete analysis for coaching and technique improvement! 🚣‍♂️
 

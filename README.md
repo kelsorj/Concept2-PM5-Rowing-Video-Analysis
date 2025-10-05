@@ -21,6 +21,9 @@ This system provides comprehensive biomechanical analysis of rowing technique by
 - **Professional visualization** with color-coded joint angle badges
 - **Comprehensive analysis** including stroke-by-stroke breakdowns
 - **Export capabilities** for further analysis in Excel, R, Python, or MATLAB
+- **Overlay-accurate force curves** in reports (default mapping reproduces PM5 overlay)
+- **High-fidelity PM5 persistence** (`pm5_combined_strokes.json` saved into analysis output)
+- **Per-stroke coaching metrics table** embedded in comprehensive images
 
 ## 🚀 Quick Start
 
@@ -44,8 +47,11 @@ pip install -r requirements.txt
 1. **Connect your Concept2 PM5** via USB and start a workout
 2. **Capture data**: `sudo python py3row_usb_video_capture.py`
 3. **Row for 2-5 minutes** then stop capture
-4. **Analyze**: `python create_complete_kinematics_overlay.py --session-dir py3rowcap_YYYYMMDD_HHMMSS`
-5. **Review results** in the generated overlay video and report
+4. **Analyze** (auto-saves combined PM5 JSON; overlay mapping by default):
+   - `python create_complete_kinematics_overlay.py --session-dir py3rowcap_YYYYMMDD_HHMMSS`
+5. (Optional) **Generate comprehensive images** with the metrics table and overlay-mapped force curve:
+   - `python comprehensive_stroke_analysis.py analysis_py3rowcap_YYYYMMDD_HHMMSS`
+6. **Review results** in the generated overlay video, images, and report
 
 ## 📊 What You Get
 
@@ -59,6 +65,7 @@ pip install -r requirements.txt
 - **Stroke-by-stroke breakdown** - Duration, peak force, power, stroke rate
 - **Body angle statistics** - Mean, standard deviation, min, max, range
 - **Force-angle correlations** - How body position relates to force output
+- **Coaching metrics per stroke** - Finish, Catch, and Sequence metrics shown in tables on images and summarized in report
 - **Detailed CSV data** - For further analysis in your preferred tools
 
 ## 🛠️ Technical Details
@@ -73,7 +80,8 @@ pip install -r requirements.txt
 - **Temporal smoothing** - Averages keypoints over multiple frames
 - **Gaussian filtering** - Reduces high-frequency noise
 - **Force curve analysis** - Combines Drive + Dwelling phases
-- **Perfect timestamping** - Frame-accurate synchronization
+- **Overlay mapping** - Force curves in plots match the PM5 overlay exactly (drive-only, recovery zero)
+- **High-fidelity persistence** - Saves `pm5_combined_strokes.json` and copies raw PM5 CSV into analysis folder
 
 ## 📁 Project Structure
 
