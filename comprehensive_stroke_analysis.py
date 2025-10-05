@@ -255,7 +255,7 @@ class ComprehensiveStrokeAnalysis:
         
         return combined_strokes
     
-    def extract_key_frames_for_stroke(self, data, stroke_number, num_frames=6):
+    def extract_key_frames_for_stroke(self, data, stroke_number, num_frames=4):
         """Extract key frames representing different phases of a stroke using kinematic detection"""
         df = data['dataframe']
         video_path = data['video_path']
@@ -332,16 +332,18 @@ class ComprehensiveStrokeAnalysis:
                 catch_frame_num = window_frames[catch_idx]['frame_idx']
                 finish_frame_num = window_frames[finish_idx]['frame_idx']
                 
-                # Select 6 evenly spaced frames between catch and finish
+                # Select 4 frames for the classical rowing phases
                 frame_range = finish_frame_num - catch_frame_num
                 if frame_range > 0:
+                    # Catch, mid-Drive, Finish, mid-Recovery
+                    drive_mid = catch_frame_num + frame_range // 2
+                    # Estimate recovery frame (finish + similar duration to drive)
+                    recovery_mid = finish_frame_num + frame_range // 2
                     selected_frames = [
-                        catch_frame_num,
-                        catch_frame_num + frame_range // 5,
-                        catch_frame_num + 2 * frame_range // 5,
-                        catch_frame_num + 3 * frame_range // 5,
-                        catch_frame_num + 4 * frame_range // 5,
-                        finish_frame_num
+                        catch_frame_num,      # Catch
+                        drive_mid,            # Drive (middle of power application)
+                        finish_frame_num,     # Finish
+                        recovery_mid          # Recovery (middle of return)
                     ]
                 else:
                     # Fallback to dataframe frames
@@ -911,21 +913,21 @@ class ComprehensiveStrokeAnalysis:
         if len(frames) == 0:
             return
         
-        # Create figure with subplots (taller for readability)
+        # Create figure with subplots (adjusted for 4 frames)
         fig = plt.figure(figsize=(20, 15))
         
-        # Create grid layout
-        gs = fig.add_gridspec(4, 6, height_ratios=[2, 2, 1.0, 2.0], width_ratios=[1, 1, 1, 1, 1, 1])
+        # Create grid layout (4 columns for 4 phases)
+        gs = fig.add_gridspec(4, 4, height_ratios=[2, 2, 1.0, 2.0], width_ratios=[1, 1, 1, 1])
         
         # Add main title
         fig.suptitle(f'Stroke #{stroke_number} - Comprehensive Analysis', fontsize=20, fontweight='bold')
         
-        # Phase labels
-        phase_labels = ["Catch", "Drive Start", "Drive Mid", "Drive End", "Recovery", "Finish"]
+        # Phase labels (classical 4 phases)
+        phase_labels = ["Catch", "Drive", "Finish", "Recovery"]
         
         # Create video frame subplots (top 2 rows)
         frame_axes = []
-        for i in range(6):
+        for i in range(4):
             if i < len(frames):
                 ax = fig.add_subplot(gs[0:2, i])
                 frame_axes.append(ax)
