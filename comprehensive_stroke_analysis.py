@@ -256,25 +256,108 @@ class ComprehensiveStrokeAnalysis:
         return combined_strokes
     
     def extract_key_frames_for_stroke(self, data, stroke_number, num_frames=6):
-        """Extract key frames representing different phases of a stroke"""
+        """Extract key frames representing different phases of a stroke using kinematic detection"""
         df = data['dataframe']
         video_path = data['video_path']
+        combined_strokes = data.get('combined_strokes')
+        pose_frames = data.get('pose_frames')
+        frame_timestamps = data.get('frame_timestamps')
         
-        # Get stroke data
+        # Get stroke data from dataframe (for angles)
         stroke_data = df[df['stroke_number'] == stroke_number]
         if len(stroke_data) == 0:
             print(f"❌ No data found for stroke {stroke_number}")
             return []
         
-        # Get frame numbers for this stroke
-        frame_numbers = stroke_data['frame_number'].tolist()
-        
-        # Select key frames (evenly spaced to represent different phases)
-        if len(frame_numbers) >= num_frames:
+        # Use kinematic detection to find actual catch and finish frames
+        if combined_strokes and pose_frames and frame_timestamps and stroke_number <= len(combined_strokes):
+            # Use the same kinematic logic as compute_coaching_metrics_for_stroke
+            stroke = combined_strokes[stroke_number - 1]
+            
+            # Map pose frames to timestamps
+            mapped_frames = []
+            limit = min(len(pose_frames), len(frame_timestamps))
+            for i in range(limit):
+                mapped_frames.append({
+                    'ts': frame_timestamps[i]['timestamp_dt'],
+                    'frame_idx': frame_timestamps[i]['frame_idx'],
+                    'pose': pose_frames[i]
+                })
+            
+            # Expand window around stroke (more before to catch the actual catch)
+            stroke_start_expanded = stroke['start_timestamp_dt'] - pd.Timedelta(seconds=0.7)
+            stroke_end_expanded = stroke['end_timestamp_dt'] + pd.Timedelta(seconds=0.3)
+            
+            # Get frames and hip positions in window
+            window_frames = []
+            window_hip_x = []
+            for item in mapped_frames:
+                if stroke_start_expanded <= item['ts'] <= stroke_end_expanded:
+                    fr = item['pose']
+                    left_hip_x = fr.get('left_hip_x')
+                    right_hip_x = fr.get('right_hip_x')
+                    left_conf = fr.get('left_hip_confidence', 0)
+                    right_conf = fr.get('right_hip_confidence', 0)
+                    if left_hip_x is not None and right_hip_x is not None and left_conf > 0.5 and right_conf > 0.5:
+                        window_frames.append(item)
+                        window_hip_x.append((left_hip_x + right_hip_x) / 2.0)
+            
+            if len(window_frames) >= 5:
+                from scipy.ndimage import gaussian_filter1d
+                smoothed = gaussian_filter1d(np.array(window_hip_x), sigma=0.8)
+                
+                # Determine direction
+                all_hip_x = []
+                for item in mapped_frames:
+                    fr = item['pose']
+                    left_hip_x = fr.get('left_hip_x')
+                    right_hip_x = fr.get('right_hip_x')
+                    left_conf = fr.get('left_hip_confidence', 0)
+                    right_conf = fr.get('right_hip_confidence', 0)
+                    if left_hip_x and right_hip_x and left_conf > 0.5 and right_conf > 0.5:
+                        all_hip_x.append((left_hip_x + right_hip_x) / 2.0)
+                
+                # Determine direction from the window itself, not all frames
+                drive_direction = 'left' if window_hip_x[0] > window_hip_x[-1] else 'right'
+                
+                # Find catch and finish
+                search_end = int(len(smoothed) * 0.6)
+                if drive_direction == 'left':
+                    catch_idx = int(np.argmax(smoothed[:search_end]))
+                    finish_idx = catch_idx + int(np.argmin(smoothed[catch_idx:]))
+                else:
+                    catch_idx = int(np.argmin(smoothed[:search_end]))
+                    finish_idx = catch_idx + int(np.argmax(smoothed[catch_idx:]))
+                
+                catch_frame_num = window_frames[catch_idx]['frame_idx']
+                finish_frame_num = window_frames[finish_idx]['frame_idx']
+                
+                # Select 6 evenly spaced frames between catch and finish
+                frame_range = finish_frame_num - catch_frame_num
+                if frame_range > 0:
+                    selected_frames = [
+                        catch_frame_num,
+                        catch_frame_num + frame_range // 5,
+                        catch_frame_num + 2 * frame_range // 5,
+                        catch_frame_num + 3 * frame_range // 5,
+                        catch_frame_num + 4 * frame_range // 5,
+                        finish_frame_num
+                    ]
+                else:
+                    # Fallback to dataframe frames
+                    frame_numbers = stroke_data['frame_number'].tolist()
+                    indices = np.linspace(0, len(frame_numbers)-1, num_frames, dtype=int)
+                    selected_frames = [frame_numbers[i] for i in indices]
+            else:
+                # Fallback to dataframe frames
+                frame_numbers = stroke_data['frame_number'].tolist()
+                indices = np.linspace(0, len(frame_numbers)-1, num_frames, dtype=int)
+                selected_frames = [frame_numbers[i] for i in indices]
+        else:
+            # Fallback to dataframe frames
+            frame_numbers = stroke_data['frame_number'].tolist()
             indices = np.linspace(0, len(frame_numbers)-1, num_frames, dtype=int)
             selected_frames = [frame_numbers[i] for i in indices]
-        else:
-            selected_frames = frame_numbers
         
         # Extract frames from video
         cap = cv2.VideoCapture(video_path)
@@ -285,7 +368,7 @@ class ComprehensiveStrokeAnalysis:
             ret, frame = cap.read()
             if ret:
                 # Get corresponding data for this frame
-                frame_data = stroke_data[stroke_data['frame_number'] == frame_num]
+                frame_data = df[df['frame_number'] == frame_num]
                 if len(frame_data) > 0:
                     frames.append({
                         'frame': frame,
@@ -293,6 +376,50 @@ class ComprehensiveStrokeAnalysis:
                         'data': frame_data.iloc[0],
                         'timestamp': frame_data.iloc[0]['timestamp'] if 'timestamp' in frame_data.columns else None
                     })
+                else:
+                    # Frame not in dataframe - get angles from pose_frames
+                    if pose_frames and frame_timestamps:
+                        # Find this frame in pose data
+                        pose_data = None
+                        for i, ft in enumerate(frame_timestamps):
+                            if ft['frame_idx'] == frame_num and i < len(pose_frames):
+                                pose_data = pose_frames[i]
+                                break
+                        
+                        if pose_data:
+                            # Create a Series with the angle data from pose
+                            frame_series = pd.Series({
+                                'frame_number': frame_num,
+                                'left_arm_angle': pose_data.get('left_arm_angle'),
+                                'right_arm_angle': pose_data.get('right_arm_angle'),
+                                'left_leg_angle': pose_data.get('left_leg_angle'),
+                                'right_leg_angle': pose_data.get('right_leg_angle'),
+                                'back_vertical_angle': pose_data.get('back_vertical_angle'),
+                                'left_ankle_vertical_angle': pose_data.get('left_ankle_vertical_angle'),
+                                'right_ankle_vertical_angle': pose_data.get('right_ankle_vertical_angle')
+                            })
+                            frames.append({
+                                'frame': frame,
+                                'frame_number': frame_num,
+                                'data': frame_series,
+                                'timestamp': None
+                            })
+                        else:
+                            # No pose data found
+                            frames.append({
+                                'frame': frame,
+                                'frame_number': frame_num,
+                                'data': pd.Series(),
+                                'timestamp': None
+                            })
+                    else:
+                        # No pose data available
+                        frames.append({
+                            'frame': frame,
+                            'frame_number': frame_num,
+                            'data': pd.Series(),
+                            'timestamp': None
+                        })
         
         cap.release()
         return frames
@@ -612,18 +739,22 @@ class ComprehensiveStrokeAnalysis:
             pct = (hip_y - wrist_y) / denom * 100.0
             return float(np.clip(pct, 0.0, 100.0))
 
-        # Determine catch and finish using kinematics (X position) + force data
-        # Strategy: Find when body starts moving in the drive direction as force increases
+        # Determine catch and finish using kinematics across ALL frames
+        # Strategy: Find local extrema in hip position around the stroke time
         
-        # Get frames within this stroke's time range (expand by 0.2s before to catch the actual catch)
-        stroke_start_expanded = stroke['start_timestamp_dt'] - pd.Timedelta(seconds=0.2)
-        stroke_frames = []
+        # First, determine global drive direction from all frames
+        all_hip_x = []
         for item in mapped_frames:
-            if stroke_start_expanded <= item['ts'] <= stroke['end_timestamp_dt']:
-                stroke_frames.append(item)
+            fr = item['frame']
+            left_hip_x = fr.get('left_hip_x')
+            right_hip_x = fr.get('right_hip_x')
+            left_conf = fr.get('left_hip_confidence', 0)
+            right_conf = fr.get('right_hip_confidence', 0)
+            if left_hip_x is not None and right_hip_x is not None and left_conf > 0.5 and right_conf > 0.5:
+                all_hip_x.append((left_hip_x + right_hip_x) / 2.0)
         
-        if len(stroke_frames) < 3:
-            # Fallback to PM5 timing if not enough frames
+        if len(all_hip_x) < 10:
+            # Fallback to PM5 timing
             first_drive = None
             last_drive = None
             for m in stroke.get('measurements', []):
@@ -636,72 +767,65 @@ class ComprehensiveStrokeAnalysis:
             catch_pose = find_nearest_frame(catch_dt) or {}
             finish_pose = find_nearest_frame(finish_dt) or {}
         else:
-            # Use kinematics to find actual catch and finish
-            # Extract hip X positions (average of left and right)
-            hip_x_positions = []
-            valid_frames = []
-            for item in stroke_frames:
-                fr = item['frame']
-                left_hip_x = fr.get('left_hip_x')
-                right_hip_x = fr.get('right_hip_x')
-                left_conf = fr.get('left_hip_confidence', 0)
-                right_conf = fr.get('right_hip_confidence', 0)
-                
-                if left_hip_x is not None and right_hip_x is not None and left_conf > 0.5 and right_conf > 0.5:
-                    hip_x_positions.append((left_hip_x + right_hip_x) / 2.0)
-                    valid_frames.append(item)
+            # Determine drive direction from overall movement pattern
+            all_hip_x_array = np.array(all_hip_x)
+            global_range = np.max(all_hip_x_array) - np.min(all_hip_x_array)
+            drive_direction = 'left' if all_hip_x[0] > all_hip_x[-1] else 'right'
             
-            if len(valid_frames) < 3:
+            # Get frames in an expanded window around this stroke (±0.5s)
+            stroke_start_expanded = stroke['start_timestamp_dt'] - pd.Timedelta(seconds=0.5)
+            stroke_end_expanded = stroke['end_timestamp_dt'] + pd.Timedelta(seconds=0.3)
+            
+            window_frames = []
+            window_hip_x = []
+            for item in mapped_frames:
+                if stroke_start_expanded <= item['ts'] <= stroke_end_expanded:
+                    fr = item['frame']
+                    left_hip_x = fr.get('left_hip_x')
+                    right_hip_x = fr.get('right_hip_x')
+                    left_conf = fr.get('left_hip_confidence', 0)
+                    right_conf = fr.get('right_hip_confidence', 0)
+                    if left_hip_x is not None and right_hip_x is not None and left_conf > 0.5 and right_conf > 0.5:
+                        window_frames.append(item)
+                        window_hip_x.append((left_hip_x + right_hip_x) / 2.0)
+            
+            if len(window_frames) < 5:
                 # Fallback
-                catch_pose = stroke_frames[0]['frame']
-                finish_pose = stroke_frames[len(stroke_frames)//2]['frame']
+                catch_pose = window_frames[0]['frame'] if window_frames else {}
+                finish_pose = window_frames[len(window_frames)//2]['frame'] if len(window_frames) > 1 else {}
             else:
-                # Determine drive direction: compare start vs end of stroke
-                start_x = np.mean(hip_x_positions[:min(5, len(hip_x_positions)//4)])
-                end_x = np.mean(hip_x_positions[-min(5, len(hip_x_positions)//4):])
+                window_hip_x_array = np.array(window_hip_x)
                 
-                drive_direction = 'left' if start_x > end_x else 'right'
+                # Find local extrema using scipy
+                from scipy.signal import argrelextrema
                 
-                # Find catch: Look for the frame where hip X is at extreme AND velocity is near zero
-                # This is right before the drive starts
-                hip_x_array = np.array(hip_x_positions)
+                # Smooth less aggressively to preserve actual peaks
+                from scipy.ndimage import gaussian_filter1d
+                smoothed = gaussian_filter1d(window_hip_x_array, sigma=0.8)
                 
-                # Calculate velocity (change in position)
-                velocity = np.gradient(hip_x_array)
+                # Simply find the absolute extreme in the appropriate half
+                # Catch should be in the earlier part of the window
+                midpoint = len(smoothed) // 2
                 
-                # Find the extreme position in the first half of the stroke
-                first_half = len(hip_x_positions) // 2
                 if drive_direction == 'left':
-                    # Look for maximum X (rightmost) in first half where velocity is about to go negative
-                    candidates = []
-                    for i in range(min(first_half, len(hip_x_positions) - 1)):
-                        if hip_x_array[i] >= np.percentile(hip_x_array[:first_half], 95):
-                            # At or near maximum position
-                            if i < len(velocity) - 1 and velocity[i+1] < 0:
-                                # Next frame starts moving left (negative velocity)
-                                candidates.append(i)
-                    catch_idx = candidates[0] if candidates else int(np.argmax(hip_x_array[:first_half]))
+                    # Catch is rightmost (maximum X) - look in first 60% of window
+                    search_end = int(len(smoothed) * 0.6)
+                    catch_idx = int(np.argmax(smoothed[:search_end]))
+                    
+                    # Finish is leftmost (minimum X) - look after catch
+                    finish_idx = catch_idx + int(np.argmin(smoothed[catch_idx:]))
                 else:
-                    # Look for minimum X (leftmost) in first half where velocity is about to go positive
-                    candidates = []
-                    for i in range(min(first_half, len(hip_x_positions) - 1)):
-                        if hip_x_array[i] <= np.percentile(hip_x_array[:first_half], 5):
-                            # At or near minimum position
-                            if i < len(velocity) - 1 and velocity[i+1] > 0:
-                                # Next frame starts moving right (positive velocity)
-                                candidates.append(i)
-                    catch_idx = candidates[0] if candidates else int(np.argmin(hip_x_array[:first_half]))
+                    # Catch is leftmost (minimum X) - look in first 60% of window  
+                    search_end = int(len(smoothed) * 0.6)
+                    catch_idx = int(np.argmin(smoothed[:search_end]))
+                    
+                    # Finish is rightmost (maximum X) - look after catch
+                    finish_idx = catch_idx + int(np.argmax(smoothed[catch_idx:]))
                 
-                # Find finish: the opposite extreme
-                if drive_direction == 'left':
-                    finish_idx = int(np.argmin(hip_x_positions))
-                else:
-                    finish_idx = int(np.argmax(hip_x_positions))
-                
-                catch_pose = valid_frames[catch_idx]['frame']
-                finish_pose = valid_frames[finish_idx]['frame']
-                catch_dt = valid_frames[catch_idx]['ts']
-                finish_dt = valid_frames[finish_idx]['ts']
+                catch_pose = window_frames[catch_idx]['frame']
+                finish_pose = window_frames[finish_idx]['frame']
+                catch_dt = window_frames[catch_idx]['ts']
+                finish_dt = window_frames[finish_idx]['ts']
 
         layback = finish_pose.get('back_vertical_angle')
         legs_unbent = mean_or_none([finish_pose.get('left_leg_angle'), finish_pose.get('right_leg_angle')])
