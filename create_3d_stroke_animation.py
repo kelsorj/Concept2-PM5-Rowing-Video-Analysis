@@ -397,12 +397,11 @@ def create_combined_stroke_analysis(analysis_dir):
             # Map force data to frames
             force_curve = stroke['combined_forceplot']
             if force_curve:
-                max_force = max(force_curve)
                 for i, frame_data in enumerate(stroke_data):
                     time_ratio = frame_data['time'] / stroke_data[-1]['time']
                     force_idx = int(time_ratio * (len(force_curve) - 1))
                     force_idx = min(force_idx, len(force_curve) - 1)
-                    frame_data['force'] = force_curve[force_idx] / max_force if max_force > 0 else 0
+                    frame_data['force'] = force_curve[force_idx]
             else:
                 for frame_data in stroke_data:
                     frame_data['force'] = 0
@@ -428,6 +427,7 @@ def create_combined_stroke_analysis(analysis_dir):
     leg_min, leg_max = min(all_leg_angles), max(all_leg_angles)
     back_min, back_max = min(all_back_angles), max(all_back_angles)
     arm_min, arm_max = min(all_arm_angles), max(all_arm_angles)
+    force_min, force_max = min(all_forces), max(all_forces)
     
     leg_range = [leg_min - 10, leg_max + 10]
     back_range = [back_min - 10, back_max + 10]
@@ -455,9 +455,16 @@ def create_combined_stroke_analysis(analysis_dir):
                 size=4,
                 color=forces,
                 colorscale='Viridis',
-                cmin=0,
-                cmax=1,
-                showscale=False,
+                cmin=force_min,
+                cmax=force_max,
+                showscale=(stroke_idx == 0),  # Only show colorbar for first stroke
+                colorbar=dict(
+                    title="Force (N)",
+                    x=1.15,
+                    len=0.6,
+                    y=0.5,
+                    yanchor='middle'
+                ),
                 line=dict(color=color, width=1)
             ),
             line=dict(
@@ -469,7 +476,7 @@ def create_combined_stroke_analysis(analysis_dir):
                          'Leg: %{x:.1f}°<br>' +
                          'Back: %{y:.1f}°<br>' +
                          'Arm: %{z:.1f}°<br>' +
-                         'Force: %{marker.color:.2f}<br>' +
+                         'Force: %{marker.color:.1f} N<br>' +
                          '<extra></extra>'
         )
         traces.append(trace)
@@ -491,8 +498,18 @@ def create_combined_stroke_analysis(analysis_dir):
                 aspectmode='cube'
             ),
             height=800,
-            width=1200,
-            showlegend=True
+            width=1400,
+            showlegend=True,
+            legend=dict(
+                x=0.02,
+                y=0.98,
+                yanchor='top',
+                xanchor='left',
+                bgcolor='rgba(255,255,255,0.8)',
+                bordercolor='rgba(0,0,0,0.2)',
+                borderwidth=1
+            ),
+            margin=dict(l=0, r=200, t=50, b=0)
         )
     )
     
