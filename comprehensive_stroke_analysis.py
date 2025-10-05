@@ -868,29 +868,68 @@ class ComprehensiveStrokeAnalysis:
                 back_series.append(fr.get('back_vertical_angle'))
                 arms_series.append(mean_or_none([fr.get('left_arm_angle'), fr.get('right_arm_angle')]))
 
-        def grad_peak_time(times, vals, prefer_positive=True):
+        def calculate_movement_period(times, vals, velocity_threshold=0.1):
+            """Find when a body part is actively moving (velocity above threshold)
+            Returns (start_time, end_time) or None if insufficient data"""
             if len(times) < 3:
-                return None
+                return None, None
             arr = np.array(vals, dtype=float)
             # Interpolate NaNs
             mask = ~np.isnan(arr)
-            if np.any(mask):
+            if np.any(mask) and np.sum(mask) >= 3:
                 arr = np.interp(np.arange(len(arr)), np.where(mask)[0], arr[mask])
+            else:
+                return None, None
+            
             seconds = np.array([t.timestamp() for t in times])
             if len(seconds) < 2:
-                return None
+                return None, None
+            
+            # Calculate velocity (rate of change)
             dt = np.gradient(seconds)
-            grad = np.gradient(arr) / np.maximum(dt, 1e-6)
-            idx = int(np.argmax(grad) if prefer_positive else np.argmin(grad))
-            return times[idx]
+            velocity = np.abs(np.gradient(arr) / np.maximum(dt, 1e-6))
+            
+            # Smooth velocity to reduce noise
+            from scipy.ndimage import gaussian_filter1d
+            velocity_smooth = gaussian_filter1d(velocity, sigma=1.0)
+            
+            # Find threshold crossing points
+            max_vel = np.max(velocity_smooth)
+            threshold = max_vel * velocity_threshold
+            
+            moving = velocity_smooth > threshold
+            if not np.any(moving):
+                return None, None
+            
+            # Find first and last time when moving
+            moving_indices = np.where(moving)[0]
+            start_idx = moving_indices[0]
+            end_idx = moving_indices[-1]
+            
+            return times[start_idx], times[end_idx]
 
-        legs_peak_t = grad_peak_time(ts_list, legs_series, prefer_positive=True)
-        back_peak_t = grad_peak_time(ts_list, back_series, prefer_positive=True)
-        arms_peak_t = grad_peak_time(ts_list, arms_series, prefer_positive=False)
+        # Calculate movement periods for each body part
+        # Use higher threshold for arms since they should only move during the strong pull phase
+        legs_start, legs_end = calculate_movement_period(ts_list, legs_series, velocity_threshold=0.15)
+        back_start, back_end = calculate_movement_period(ts_list, back_series, velocity_threshold=0.15)
+        arms_start, arms_end = calculate_movement_period(ts_list, arms_series, velocity_threshold=0.35)  # Higher threshold for arms
 
         drive_dur = (drive_end - drive_start).total_seconds() if (drive_end and drive_start) else None
-        sep_lb = float(np.clip(((back_peak_t - legs_peak_t).total_seconds() / drive_dur) * 100.0, 0.0, 100.0)) if (drive_dur and legs_peak_t and back_peak_t) else None
-        sep_ba = float(np.clip(((arms_peak_t - back_peak_t).total_seconds() / drive_dur) * 100.0, 0.0, 100.0)) if (drive_dur and back_peak_t and arms_peak_t) else None
+        
+        # Calculate separation as the % of drive time when only one body part is moving (not overlapping)
+        # Legs&Back separation: % of drive when legs are moving but back is not
+        sep_lb = None
+        if drive_dur and legs_start and legs_end and back_start and back_end:
+            # Time when legs are moving alone (before back starts)
+            legs_alone_duration = max(0, (back_start - legs_start).total_seconds())
+            sep_lb = float(np.clip((legs_alone_duration / drive_dur) * 100.0, 0.0, 100.0))
+        
+        # Back&Arms separation: % of drive when back is moving but arms are not
+        sep_ba = None
+        if drive_dur and back_start and back_end and arms_start and arms_end:
+            # Time when back is moving alone (before arms start)
+            back_alone_duration = max(0, (arms_start - back_start).total_seconds())
+            sep_ba = float(np.clip((back_alone_duration / drive_dur) * 100.0, 0.0, 100.0))
         
         # Calculate stroke duration consistently using kinematic boundaries if available
         if 'catch_dt' in locals() and 'finish_dt' in locals():
