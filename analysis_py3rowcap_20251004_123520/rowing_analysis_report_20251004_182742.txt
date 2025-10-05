@@ -1,7 +1,7 @@
 ROWING BIOMECHANICAL ANALYSIS REPORT
 ==================================================
 
-Generated: 2025-10-04 18:17:22
+Generated: 2025-10-04 18:27:42
 Total Frames Analyzed: 473
 Total Strokes: 10
 Analysis Duration: 0:00:47.258000

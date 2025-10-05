@@ -168,6 +168,7 @@ def run_kinematics_analysis(video_path, output_dir="kinematics_analysis"):
     """Run kinematics analysis on the video and return pose data"""
     print(f"🤖 Running kinematics analysis on: {video_path}")
     
+    # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
     # Check if video exists
@@ -807,6 +808,7 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
     print("🎬 Creating Complete Kinematics Overlay")
     print("=" * 60)
     
+    # Create output directory
     os.makedirs(output_dir, exist_ok=True)
     
     # Step 1: Run kinematics analysis on the video
@@ -945,17 +947,54 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
 
 def main():
     parser = argparse.ArgumentParser(description="Create complete kinematics overlay with force data")
-    parser.add_argument("--video", required=True, help="Path to video file")
-    parser.add_argument("--frames-csv", required=True, help="Path to frames CSV file with timestamps")
-    parser.add_argument("--raw-csv", required=True, help="Path to raw CSV file")
-    parser.add_argument("--output-dir", default="complete_kinematics_overlay", help="Output directory")
+    parser.add_argument("--session-dir", required=True, help="Path to session directory containing video and CSV files")
+    parser.add_argument("--output-dir", help="Output directory (defaults to session directory)")
     
     args = parser.parse_args()
     
+    # Validate session directory
+    if not os.path.exists(args.session_dir):
+        print(f"❌ Session directory not found: {args.session_dir}")
+        return
+    
+    # Find files in session directory
+    session_dir = args.session_dir
+    video_files = glob.glob(os.path.join(session_dir, "*.mp4"))
+    frames_csv_files = glob.glob(os.path.join(session_dir, "*_frames.csv"))
+    raw_csv_files = glob.glob(os.path.join(session_dir, "*_raw.csv"))
+    
+    if not video_files:
+        print(f"❌ No video file found in {session_dir}")
+        return
+    if not frames_csv_files:
+        print(f"❌ No frames CSV file found in {session_dir}")
+        return
+    if not raw_csv_files:
+        print(f"❌ No raw CSV file found in {session_dir}")
+        return
+    
+    video_path = video_files[0]
+    frames_csv_path = frames_csv_files[0]
+    raw_csv_path = raw_csv_files[0]
+    
+    # Use session directory as output if not specified, but create analysis in current directory
+    if args.output_dir:
+        output_dir = args.output_dir
+    else:
+        # Create analysis directory in current working directory with session name
+        session_name = os.path.basename(session_dir.rstrip('/'))
+        output_dir = f"analysis_{session_name}"
+    
     print("🚣‍♂️ Complete Kinematics Overlay with Force Data")
     print("=" * 60)
+    print(f"📁 Session directory: {session_dir}")
+    print(f"📹 Video file: {os.path.basename(video_path)}")
+    print(f"📊 Frames CSV: {os.path.basename(frames_csv_path)}")
+    print(f"📊 Raw CSV: {os.path.basename(raw_csv_path)}")
+    print(f"📁 Output directory: {output_dir}")
+    print()
     
-    create_complete_kinematics_overlay(args.video, args.frames_csv, args.raw_csv, args.output_dir)
+    create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path, output_dir)
 
 if __name__ == "__main__":
     main()
