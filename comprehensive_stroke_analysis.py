@@ -1377,9 +1377,11 @@ class ComprehensiveStrokeAnalysis:
                     normalized_curves.append(full_curve)
             
             if normalized_curves:
-                avg_curve = np.mean(normalized_curves, axis=0)
-                std_curve = np.std(normalized_curves, axis=0)
-                x_axis = np.linspace(0, 1, 100)
+                # Only use the drive phase (first 50 points)
+                drive_curves = [curve[:50] for curve in normalized_curves]
+                avg_curve = np.mean(drive_curves, axis=0)
+                std_curve = np.std(drive_curves, axis=0)
+                x_axis = np.linspace(0, 1, 50)  # 0 = Catch, 1 = Finish
                 
                 # Plot average with standard deviation band
                 ax_power.plot(x_axis, avg_curve, 'b-', linewidth=3, label='Average Force')
@@ -1387,17 +1389,16 @@ class ComprehensiveStrokeAnalysis:
                                      alpha=0.3, color='blue', label='±1 Std Dev')
                 
                 # Plot individual strokes faintly
-                for i, curve in enumerate(normalized_curves):
+                for i, curve in enumerate(drive_curves):
                     ax_power.plot(x_axis, curve, 'gray', linewidth=0.5, alpha=0.3)
                 
-                ax_power.axvline(x=0.5, color='black', linestyle='--', linewidth=1, alpha=0.5)
                 ax_power.set_xlim(0, 1)
                 ax_power.set_ylim(0, max(avg_curve) * 1.1)
-                ax_power.set_xlabel('Stroke Cycle', fontsize=14, fontweight='bold')
+                ax_power.set_xlabel('Drive Phase', fontsize=14, fontweight='bold')
                 ax_power.set_ylabel('Normalized Force', fontsize=14, fontweight='bold')
-                ax_power.set_title('Average Force Curve - All Strokes', fontsize=16, fontweight='bold')
-                ax_power.set_xticks([0, 0.5, 1])
-                ax_power.set_xticklabels(['Catch', 'Finish', 'Catch'])
+                ax_power.set_title('Average Force Curve - Drive Phase Only', fontsize=16, fontweight='bold')
+                ax_power.set_xticks([0, 1])
+                ax_power.set_xticklabels(['Catch', 'Finish'])
                 ax_power.legend(loc='upper right', fontsize=12)
                 ax_power.grid(True, alpha=0.3)
         
