@@ -1052,7 +1052,7 @@ class ComprehensiveStrokeAnalysis:
             
             draw_metric_row(ax_table, x_catch, base_y - row_gap*1 - row_h*1, col_w, row_h,
                           "Forward body angle", f"{metrics['catch_body']}°",
-                          -39, -13, -60, 20, is_min_threshold=False)
+                          13, 39, 0, 60, is_min_threshold=False)
             
             draw_metric_row(ax_table, x_catch, base_y - row_gap*2 - row_h*2, col_w, row_h,
                           "Elbows unbent", f"{metrics['catch_elbows']}°",
@@ -1063,7 +1063,7 @@ class ComprehensiveStrokeAnalysis:
             
             draw_metric_row(ax_table, x_finish, base_y - row_gap*0, col_w, row_h,
                           "Layback body angle", f"{metrics['finish_layback']}°",
-                          32, 48, 0, 80, is_min_threshold=False)
+                          -48, -32, -60, 0, is_min_threshold=False)
             
             draw_metric_row(ax_table, x_finish, base_y - row_gap*1 - row_h*1, col_w, row_h,
                           "Legs unbent", f"{metrics['finish_legs']}°",
