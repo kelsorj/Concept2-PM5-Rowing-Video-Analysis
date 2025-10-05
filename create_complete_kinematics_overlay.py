@@ -19,6 +19,155 @@ import glob
 from ultralytics import YOLO
 import tempfile
 import shutil
+from collections import deque
+from scipy import ndimage
+
+class PoseSmoother:
+    """Advanced pose smoothing to reduce jitter and bouncing in skeleton overlay"""
+    
+    def __init__(self, window_size=5, confidence_threshold=0.5, outlier_threshold=2.0):
+        self.window_size = window_size
+        self.confidence_threshold = confidence_threshold
+        self.outlier_threshold = outlier_threshold
+        
+        # Store recent keypoints for temporal smoothing
+        self.keypoint_history = deque(maxlen=window_size)
+        self.smoothed_keypoints = None
+        
+        # Keypoint names for YOLO pose
+        self.keypoint_names = [
+            'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
+            'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+            'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
+            'left_knee', 'right_knee', 'left_ankle', 'right_ankle'
+        ]
+    
+    def smooth_keypoints(self, keypoints):
+        """Apply comprehensive smoothing to keypoints"""
+        if keypoints is None or len(keypoints) == 0:
+            return None
+        
+        # Convert to numpy array for easier processing
+        kpts_array = np.array(keypoints)
+        
+        # Filter by confidence
+        filtered_kpts = self._filter_by_confidence(kpts_array)
+        
+        # Add to history
+        self.keypoint_history.append(filtered_kpts)
+        
+        # Apply temporal smoothing
+        smoothed_kpts = self._temporal_smoothing()
+        
+        # Apply outlier rejection
+        smoothed_kpts = self._reject_outliers(smoothed_kpts)
+        
+        # Apply gaussian smoothing
+        smoothed_kpts = self._gaussian_smooth(smoothed_kpts)
+        
+        self.smoothed_keypoints = smoothed_kpts
+        return smoothed_kpts
+    
+    def _filter_by_confidence(self, keypoints):
+        """Filter keypoints by confidence threshold"""
+        filtered = keypoints.copy()
+        for i in range(len(filtered)):
+            if filtered[i, 2] < self.confidence_threshold:
+                # Set low confidence keypoints to NaN
+                filtered[i, 0] = np.nan
+                filtered[i, 1] = np.nan
+        return filtered
+    
+    def _temporal_smoothing(self):
+        """Apply temporal smoothing using moving average"""
+        if len(self.keypoint_history) < 2:
+            return self.keypoint_history[-1] if self.keypoint_history else None
+        
+        # Convert history to numpy array
+        history_array = np.array(list(self.keypoint_history))
+        
+        # Calculate weighted average (more recent frames have higher weight)
+        weights = np.linspace(0.5, 1.0, len(self.keypoint_history))
+        weights = weights / np.sum(weights)
+        
+        smoothed = np.zeros_like(history_array[-1])
+        
+        for i in range(len(self.keypoint_names)):
+            # Get x, y coordinates for this keypoint across all frames
+            x_coords = history_array[:, i, 0]
+            y_coords = history_array[:, i, 1]
+            confidences = history_array[:, i, 2]
+            
+            # Only smooth if we have valid data
+            valid_x = ~np.isnan(x_coords)
+            valid_y = ~np.isnan(y_coords)
+            valid_conf = confidences > self.confidence_threshold
+            
+            if np.any(valid_x & valid_y & valid_conf):
+                # Weighted average of valid coordinates
+                valid_weights = weights[valid_x & valid_y & valid_conf]
+                valid_weights = valid_weights / np.sum(valid_weights)
+                
+                smoothed[i, 0] = np.average(x_coords[valid_x & valid_y & valid_conf], weights=valid_weights)
+                smoothed[i, 1] = np.average(y_coords[valid_x & valid_y & valid_conf], weights=valid_weights)
+                smoothed[i, 2] = np.average(confidences[valid_conf], weights=valid_weights)
+            else:
+                # Use the most recent valid value
+                smoothed[i] = history_array[-1, i]
+        
+        return smoothed
+    
+    def _reject_outliers(self, keypoints):
+        """Reject outlier keypoints that are too far from expected positions"""
+        if keypoints is None or len(self.keypoint_history) < 3:
+            return keypoints
+        
+        # Calculate expected position based on recent history
+        recent_history = np.array(list(self.keypoint_history)[-3:])
+        expected_positions = np.mean(recent_history, axis=0)
+        
+        filtered = keypoints.copy()
+        
+        for i in range(len(keypoints)):
+            if not np.isnan(keypoints[i, 0]) and not np.isnan(keypoints[i, 1]):
+                # Calculate distance from expected position
+                distance = np.sqrt(
+                    (keypoints[i, 0] - expected_positions[i, 0])**2 + 
+                    (keypoints[i, 1] - expected_positions[i, 1])**2
+                )
+                
+                # If too far from expected, use expected position instead
+                if distance > self.outlier_threshold * 50:  # 50 pixels threshold
+                    filtered[i, 0] = expected_positions[i, 0]
+                    filtered[i, 1] = expected_positions[i, 1]
+        
+        return filtered
+    
+    def _gaussian_smooth(self, keypoints):
+        """Apply gaussian smoothing to reduce high-frequency noise"""
+        if keypoints is None:
+            return None
+        
+        smoothed = keypoints.copy()
+        
+        # Apply gaussian filter to x and y coordinates
+        for i in range(len(keypoints)):
+            if not np.isnan(keypoints[i, 0]) and not np.isnan(keypoints[i, 1]):
+                # Get recent history for this keypoint
+                if len(self.keypoint_history) >= 3:
+                    recent_x = [h[i, 0] for h in self.keypoint_history if not np.isnan(h[i, 0])]
+                    recent_y = [h[i, 1] for h in self.keypoint_history if not np.isnan(h[i, 1])]
+                    
+                    if len(recent_x) >= 3:
+                        # Apply gaussian filter
+                        smoothed[i, 0] = ndimage.gaussian_filter1d(recent_x, sigma=0.5)[-1]
+                        smoothed[i, 1] = ndimage.gaussian_filter1d(recent_y, sigma=0.5)[-1]
+        
+        return smoothed
+    
+    def get_smoothed_keypoints(self):
+        """Get the most recent smoothed keypoints"""
+        return self.smoothed_keypoints
 
 def analyze_rowing_pose(keypoints):
     """Analyze rowing pose and calculate body angles"""
@@ -189,6 +338,10 @@ def run_kinematics_analysis(video_path, output_dir="kinematics_analysis"):
     model = YOLO('yolo11n-pose.pt')
     print("🤖 Loaded YOLO11 pose model")
     
+    # Initialize pose smoother
+    smoother = PoseSmoother(window_size=5, confidence_threshold=0.5, outlier_threshold=2.0)
+    print("🎯 Initialized pose smoother for stable skeleton overlay")
+    
     # Output files
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_json = os.path.join(output_dir, f"pose_data_{timestamp}.json")
@@ -211,10 +364,16 @@ def run_kinematics_analysis(video_path, output_dir="kinematics_analysis"):
         
         if results and len(results) > 0 and results[0].keypoints is not None:
             # Get keypoints for the first person detected
-            keypoints = results[0].keypoints.data[0].cpu().numpy()
+            raw_keypoints = results[0].keypoints.data[0].cpu().numpy()
+            
+            # Apply smoothing to reduce jitter
+            smoothed_keypoints = smoother.smooth_keypoints(raw_keypoints)
+            
+            # Use smoothed keypoints for analysis
+            keypoints_to_use = smoothed_keypoints if smoothed_keypoints is not None else raw_keypoints
             
             # Analyze pose
-            pose_analysis = analyze_rowing_pose(keypoints)
+            pose_analysis = analyze_rowing_pose(keypoints_to_use)
             
             # Add frame info
             pose_analysis['frame_number'] = frame_count
@@ -259,6 +418,7 @@ def run_kinematics_analysis(video_path, output_dir="kinematics_analysis"):
     
     print(f"✅ Kinematics analysis complete!")
     print(f"   📊 Processed {frame_count} frames")
+    print(f"   🎯 Applied pose smoothing for stable skeleton overlay")
     print(f"   💾 Pose data saved: {output_json}")
     
     return output_json
@@ -831,8 +991,8 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
         print("❌ Missing required data. Cannot create overlay video.")
         return
     
-    # Step 3: Create overlay video
-    print("\n🎬 Step 3: Creating Overlay Video")
+    # Step 3: Create overlay video with real-time smoothing
+    print("\n🎬 Step 3: Creating Overlay Video with Real-time Smoothing")
     
     # Open video
     cap = cv2.VideoCapture(video_path)
@@ -848,6 +1008,11 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
     
     print(f"📹 Video: {width}x{height} @ {fps}fps, {total_frames} frames")
     
+    # Initialize YOLO model and smoother for real-time overlay
+    model = YOLO('yolo11n-pose.pt')
+    smoother = PoseSmoother(window_size=5, confidence_threshold=0.5, outlier_threshold=2.0)
+    print("🎯 Initialized real-time pose smoother for stable skeleton overlay")
+    
     # Create output video
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = os.path.join(output_dir, f"complete_kinematics_overlay_{timestamp}.mp4")
@@ -855,7 +1020,7 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     
-    print(f"📊 Processing frames with complete kinematics and force overlays...")
+    print(f"📊 Processing frames with smoothed skeleton overlay and force data...")
     
     frame_count = 0
     overlays_added = 0
@@ -873,20 +1038,30 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
             # Fallback if we run out of timestamps
             frame_timestamp = frame_timestamps[-1]['timestamp_dt']
         
-        # Get pose data for this frame
-        pose_frame = None
-        if frame_count < len(pose_data):
-            pose_frame = pose_data[frame_count]
-            elapsed_s = float(pose_frame.get('timestamp', frame_count / fps))
+        # Run real-time pose detection and smoothing for overlay
+        results = model(frame, verbose=False)
+        if results and len(results) > 0 and results[0].keypoints is not None:
+            # Get keypoints for the first person detected
+            raw_keypoints = results[0].keypoints.data[0].cpu().numpy()
+            
+            # Apply smoothing to reduce jitter in overlay
+            smoothed_keypoints = smoother.smooth_keypoints(raw_keypoints)
+            
+            # Use smoothed keypoints for overlay
+            keypoints_to_use = smoothed_keypoints if smoothed_keypoints is not None else raw_keypoints
+            
+            # Create pose analysis from smoothed keypoints
+            pose_analysis = analyze_rowing_pose(keypoints_to_use)
             
             # Create pose analysis display
-            angles_display = create_enhanced_joint_angles_display(pose_frame, frame_count, elapsed_s)
+            elapsed_s = frame_count / fps
+            angles_display = create_enhanced_joint_angles_display(pose_analysis, frame_count, elapsed_s)
             if angles_display is not None:
                 overlay_display(frame, angles_display, 10, 10)
                 overlays_added += 1
             
-            # Draw joint angles and skeleton directly on the video frame
-            draw_joint_angles_on_frame(frame, pose_frame)
+            # Draw smoothed joint angles and skeleton directly on the video frame
+            draw_joint_angles_on_frame(frame, pose_analysis)
         
         # Find closest stroke for current frame timestamp
         closest_stroke, force_idx, stroke_num = find_closest_stroke_for_time(frame_timestamp, combined_strokes)
@@ -941,6 +1116,7 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
     print(f"   📊 Overlay rate: {(overlays_added/frame_count)*100:.1f}%")
     print(f"   🔋 Force plot overlays: {force_overlays}")
     print(f"   📊 Force overlay rate: {(force_overlays/frame_count)*100:.1f}%")
+    print(f"   🎯 Applied real-time pose smoothing for stable skeleton")
     print(f"   🤖 Pose data from: {pose_json_path}")
     print(f"   📋 Analysis report: {report_path}")
     print(f"   📊 Detailed data: {csv_path}")
