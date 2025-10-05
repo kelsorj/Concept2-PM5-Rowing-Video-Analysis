@@ -460,8 +460,8 @@ def create_combined_stroke_analysis(analysis_dir):
                 showscale=(stroke_idx == 0),  # Only show colorbar for first stroke
                 colorbar=dict(
                     title="Force (N)",
-                    x=1.15,
-                    len=0.6,
+                    x=1.05,
+                    len=0.7,
                     y=0.5,
                     yanchor='middle'
                 ),
@@ -509,7 +509,7 @@ def create_combined_stroke_analysis(analysis_dir):
                 bordercolor='rgba(0,0,0,0.2)',
                 borderwidth=1
             ),
-            margin=dict(l=0, r=200, t=50, b=0)
+            margin=dict(l=0, r=120, t=50, b=0)
         )
     )
     
