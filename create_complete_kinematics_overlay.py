@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 import argparse
 import re
 import glob
-from ultralytics import YOLO
+from ultralytics import YOLO  # type: ignore
 import tempfile
 import shutil
 from collections import deque
