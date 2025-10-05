@@ -696,11 +696,11 @@ class ComprehensiveStrokeAnalysis:
         if len(frames) == 0:
             return
         
-        # Create figure with subplots
-        fig = plt.figure(figsize=(20, 12))
+        # Create figure with subplots (taller for readability)
+        fig = plt.figure(figsize=(20, 15))
         
         # Create grid layout
-        gs = fig.add_gridspec(4, 6, height_ratios=[2, 2, 1.0, 1.2], width_ratios=[1, 1, 1, 1, 1, 1])
+        gs = fig.add_gridspec(4, 6, height_ratios=[2, 2, 1.0, 2.0], width_ratios=[1, 1, 1, 1, 1, 1])
         
         # Add main title
         fig.suptitle(f'Stroke #{stroke_number} - Comprehensive Analysis', fontsize=20, fontweight='bold')
@@ -794,13 +794,13 @@ class ComprehensiveStrokeAnalysis:
 
             # Layout: three columns (Catch | Finish | Sequence)
             col_w = 0.28
-            col_gap = 0.05
+            col_gap = 0.06
             col_x0 = 0.05
             col_x1 = col_x0 + col_w + col_gap
             col_x2 = col_x1 + col_w + col_gap
-            base_y = 0.25
-            g_h = 0.09
-            g_gap = 0.11
+            base_y = 0.55
+            g_h = 0.10
+            g_gap = 0.20
             g_w = col_w
 
             # Column headers
@@ -815,13 +815,13 @@ class ComprehensiveStrokeAnalysis:
 
             # Finish gauges
             draw_gauge_range(ax_table, col_x1, base_y + g_gap*1, g_w, g_h, metrics['finish_layback'], 32, 48, 0, 80, "°", "Layback")
-            draw_gauge_min(ax_table, col_x1, base_y + g_gap*0, g_w, g_h, metrics['finish_legs'], 164, 120, 200, "°", "Legs unbent")
+            draw_gauge_min(ax_table, col_x1, base_y + 0* g_gap, g_w, g_h, metrics['finish_legs'], 164, 120, 200, "°", "Legs unbent")
             draw_gauge_range(ax_table, col_x1, base_y - g_gap*1, g_w, g_h, metrics['finish_handle'], 40, 80, 0, 100, "%", "Handle @ torso")
 
             # Sequence quick values (right column)
-            ax_table.text(col_x2, base_y + g_gap*1, f"Legs→Back: {metrics['sep_lb']}%", fontsize=12)
-            ax_table.text(col_x2, base_y + g_gap*0, f"Back→Arms: {metrics['sep_ba']}%", fontsize=12)
-            ax_table.text(col_x2, base_y - g_gap*1, f"Drive ratio: {metrics['drive_ratio']}%", fontsize=12)
+            ax_table.text(col_x2, base_y + g_gap*1, f"Legs→Back: {metrics['sep_lb']}%", fontsize=13)
+            ax_table.text(col_x2, base_y + 0* g_gap, f"Back→Arms: {metrics['sep_ba']}%", fontsize=13)
+            ax_table.text(col_x2, base_y - g_gap*1, f"Drive ratio: {metrics['drive_ratio']}%", fontsize=13)
         
         plt.tight_layout()
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
