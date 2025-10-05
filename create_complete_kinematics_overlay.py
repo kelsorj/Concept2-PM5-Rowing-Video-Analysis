@@ -115,6 +115,53 @@ def analyze_rowing_pose(keypoints):
     else:
         analysis['torso_lean_angle'] = None
     
+    # Calculate ankle angles relative to vertical (dorsiflexion/plantarflexion)
+    def calc_angle_to_vertical(p1, p2):
+        """Calculate angle between line p1-p2 and vertical reference"""
+        if p1 is None or p2 is None:
+            return None
+        # Vector from p1 to p2
+        v_line = np.array([p2[0] - p1[0], p2[1] - p1[1]], dtype=np.float32)
+        # Vertical reference vector (pointing up)
+        v_vertical = np.array([0.0, -1.0], dtype=np.float32)
+        
+        # Normalize vectors
+        n_line = np.linalg.norm(v_line)
+        n_vertical = np.linalg.norm(v_vertical)
+        
+        if n_line == 0 or n_vertical == 0:
+            return None
+        
+        v_line_norm = v_line / n_line
+        v_vertical_norm = v_vertical / n_vertical
+        
+        # Calculate signed angle using cross product
+        cross_z = v_vertical_norm[0] * v_line_norm[1] - v_vertical_norm[1] * v_line_norm[0]
+        dot = v_vertical_norm[0] * v_line_norm[0] + v_vertical_norm[1] * v_line_norm[1]
+        signed_angle = float(np.degrees(np.arctan2(cross_z, dot)))
+        
+        return signed_angle
+    
+    # Left ankle angle relative to vertical (shank vector)
+    if left_ankle and left_knee:
+        analysis['left_ankle_vertical_angle'] = calc_angle_to_vertical(left_ankle, left_knee)
+    else:
+        analysis['left_ankle_vertical_angle'] = None
+    
+    # Right ankle angle relative to vertical (shank vector)
+    if right_ankle and right_knee:
+        analysis['right_ankle_vertical_angle'] = calc_angle_to_vertical(right_ankle, right_knee)
+    else:
+        analysis['right_ankle_vertical_angle'] = None
+    
+    # Back angle relative to vertical (torso vector)
+    if left_shoulder and right_shoulder and left_hip and right_hip:
+        shoulder_center = ((left_shoulder[0] + right_shoulder[0]) / 2, (left_shoulder[1] + right_shoulder[1]) / 2)
+        hip_center = ((left_hip[0] + right_hip[0]) / 2, (left_hip[1] + right_hip[1]) / 2)
+        analysis['back_vertical_angle'] = calc_angle_to_vertical(hip_center, shoulder_center)
+    else:
+        analysis['back_vertical_angle'] = None
+    
     return analysis
 
 def run_kinematics_analysis(video_path, output_dir="kinematics_analysis"):
@@ -382,19 +429,27 @@ def create_enhanced_joint_angles_display(pose_frame, frame_num, elapsed_s):
     
     cv2.putText(img, "ARM ANGLES:", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['white'], 1); y_pos += line_height
     if pose_frame.get('left_arm_angle') is not None:
-        cv2.putText(img, f"  L Arm: {pose_frame['left_arm_angle']:.1f}°", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['lime'], 1); y_pos += line_height
+        cv2.putText(img, f"  L Arm: {pose_frame['left_arm_angle']:.1f}", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['lime'], 1); y_pos += line_height
     if pose_frame.get('right_arm_angle') is not None:
-        cv2.putText(img, f"  R Arm: {pose_frame['right_arm_angle']:.1f}°", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['cyan'], 1); y_pos += line_height
+        cv2.putText(img, f"  R Arm: {pose_frame['right_arm_angle']:.1f}", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['cyan'], 1); y_pos += line_height
     
     cv2.putText(img, "LEG ANGLES:", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['white'], 1); y_pos += line_height
     if pose_frame.get('left_leg_angle') is not None:
-        cv2.putText(img, f"  L Leg: {pose_frame['left_leg_angle']:.1f}°", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['lime'], 1); y_pos += line_height
+        cv2.putText(img, f"  L Leg: {pose_frame['left_leg_angle']:.1f}", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['lime'], 1); y_pos += line_height
     if pose_frame.get('right_leg_angle') is not None:
-        cv2.putText(img, f"  R Leg: {pose_frame['right_leg_angle']:.1f}°", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['cyan'], 1); y_pos += line_height
+        cv2.putText(img, f"  R Leg: {pose_frame['right_leg_angle']:.1f}", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['cyan'], 1); y_pos += line_height
     
     cv2.putText(img, "TORSO:", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['white'], 1); y_pos += line_height
-    if pose_frame.get('torso_lean_angle') is not None:
-        cv2.putText(img, f"  Lean: {pose_frame['torso_lean_angle']:.1f}°", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['yellow'], 1)
+    if pose_frame.get('back_vertical_angle') is not None:
+        cv2.putText(img, f"  Lean: {pose_frame['back_vertical_angle']:.1f}", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['yellow'], 1); y_pos += line_height
+    
+    cv2.putText(img, "VERTICAL ANGLES:", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['white'], 1); y_pos += line_height
+    if pose_frame.get('left_ankle_vertical_angle') is not None:
+        cv2.putText(img, f"  L Ankle: {pose_frame['left_ankle_vertical_angle']:.1f}", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['lime'], 1); y_pos += line_height
+    if pose_frame.get('right_ankle_vertical_angle') is not None:
+        cv2.putText(img, f"  R Ankle: {pose_frame['right_ankle_vertical_angle']:.1f}", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['cyan'], 1); y_pos += line_height
+    if pose_frame.get('back_vertical_angle') is not None:
+        cv2.putText(img, f"  Back: {pose_frame['back_vertical_angle']:.1f}", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors['yellow'], 1)
     
     return img
 
@@ -436,7 +491,7 @@ def draw_joint_angles_on_frame(frame, pose_frame):
         if p is not None:
             cv2.circle(frame, p, 6, color, -1)
 
-    def draw_badge(p, text, bg_color, text_color=(0, 0, 0), draw_deg=False):
+    def draw_badge(p, text, bg_color, text_color=(0, 0, 0)):
         if p is None:
             return
         x, y = p
@@ -451,12 +506,6 @@ def draw_joint_angles_on_frame(frame, pose_frame):
         cv2.rectangle(frame, (x1, y1), (x2, y2), bg_color, -1)
         cv2.rectangle(frame, (x1, y1), (x2, y2), (50,50,50), 1)
         cv2.putText(frame, text, (x1 + pad, y2 - pad - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
-        if draw_deg:
-            cx = x1 + pad + tw + 6
-            cy = y1 + th // 3
-            cx = min(cx, frame.shape[1]-3)
-            cy = max(3, min(cy, frame.shape[0]-3))
-            cv2.circle(frame, (cx, cy), 4, text_color, 2)
 
     # Collect keypoints we care about
     ls = get_kpt('left_shoulder')
@@ -498,37 +547,75 @@ def draw_joint_angles_on_frame(frame, pose_frame):
     # Compute angles and draw badges at the vertex
     ang_left_elbow = calc_angle(ls, le, lw)
     if ang_left_elbow is not None:
-        draw_badge(le, f"{ang_left_elbow:.0f}", (0, 255, 255), draw_deg=True)
+        draw_badge(le, f"{ang_left_elbow:.0f}", (0, 255, 255))
 
     ang_right_elbow = calc_angle(rs, re, rw)
     if ang_right_elbow is not None:
-        draw_badge(re, f"{ang_right_elbow:.0f}", (0, 255, 255), draw_deg=True)
+        draw_badge(re, f"{ang_right_elbow:.0f}", (0, 255, 255))
 
     ang_left_knee = calc_angle(lh, lk, la)
     if ang_left_knee is not None:
-        draw_badge(lk, f"{ang_left_knee:.0f}", (255, 200, 0), draw_deg=True)
+        draw_badge(lk, f"{ang_left_knee:.0f}", (255, 200, 0))
 
     ang_right_knee = calc_angle(rh, rk, ra)
     if ang_right_knee is not None:
-        draw_badge(rk, f"{ang_right_knee:.0f}", (255, 200, 0), draw_deg=True)
+        draw_badge(rk, f"{ang_right_knee:.0f}", (255, 200, 0))
 
     # Hip angle (shoulder-hip-knee) — draw at hip
     ang_left_hip = calc_angle(ls, lh, lk)
     if ang_left_hip is not None:
-        draw_badge(lh, f"{ang_left_hip:.0f}", (200, 200, 200), draw_deg=True)
+        draw_badge(lh, f"{ang_left_hip:.0f}", (200, 200, 200))
 
     ang_right_hip = calc_angle(rs, rh, rk)
     if ang_right_hip is not None:
-        draw_badge(rh, f"{ang_right_hip:.0f}", (200, 200, 200), draw_deg=True)
+        draw_badge(rh, f"{ang_right_hip:.0f}", (200, 200, 200))
 
-    # Torso lean badge near midpoint between shoulders
+    # Ankle angles relative to vertical
+    def calc_angle_to_vertical(p1, p2):
+        """Calculate angle between line p1-p2 and vertical reference"""
+        if p1 is None or p2 is None:
+            return None
+        # Vector from p1 to p2
+        v_line = np.array([p2[0] - p1[0], p2[1] - p1[1]], dtype=np.float32)
+        # Vertical reference vector (pointing up)
+        v_vertical = np.array([0.0, -1.0], dtype=np.float32)
+        
+        # Normalize vectors
+        n_line = np.linalg.norm(v_line)
+        n_vertical = np.linalg.norm(v_vertical)
+        
+        if n_line == 0 or n_vertical == 0:
+            return None
+        
+        v_line_norm = v_line / n_line
+        v_vertical_norm = v_vertical / n_vertical
+        
+        # Calculate signed angle using cross product
+        cross_z = v_vertical_norm[0] * v_line_norm[1] - v_vertical_norm[1] * v_line_norm[0]
+        dot = v_vertical_norm[0] * v_line_norm[0] + v_vertical_norm[1] * v_line_norm[1]
+        signed_angle = float(np.degrees(np.arctan2(cross_z, dot)))
+        
+        return signed_angle
+
+    # Left ankle angle relative to vertical
+    if la is not None and lk is not None:
+        left_ankle_vertical = calc_angle_to_vertical(la, lk)
+        if left_ankle_vertical is not None:
+            draw_badge(la, f"{left_ankle_vertical:.0f}", (255, 255, 0))
+
+    # Right ankle angle relative to vertical
+    if ra is not None and rk is not None:
+        right_ankle_vertical = calc_angle_to_vertical(ra, rk)
+        if right_ankle_vertical is not None:
+            draw_badge(ra, f"{right_ankle_vertical:.0f}", (255, 255, 0))
+
+    # Back angle relative to vertical
     if ls is not None and rs is not None and lh is not None and rh is not None:
         shoulder_center = (int((ls[0] + rs[0]) / 2), int((ls[1] + rs[1]) / 2))
         hip_center = (int((lh[0] + rh[0]) / 2), int((lh[1] + rh[1]) / 2))
-        vertical_ref = (shoulder_center[0], shoulder_center[1] + 100)
-        torso_angle = calc_angle(vertical_ref, shoulder_center, hip_center)
-        if torso_angle is not None:
-            draw_badge(shoulder_center, f"{torso_angle:.0f}", (0, 255, 128), draw_deg=True)
+        back_vertical = calc_angle_to_vertical(hip_center, shoulder_center)
+        if back_vertical is not None:
+            draw_badge(shoulder_center, f"{back_vertical:.0f}", (0, 255, 128))
 
 def overlay_display(frame, display, x_offset, y_offset):
     """Overlays a display image onto the video frame"""
@@ -574,6 +661,146 @@ def find_closest_stroke_for_time(target_time, combined_strokes):
             stroke_num = i + 1
     
     return closest_stroke, closest_idx, stroke_num
+
+def generate_comprehensive_report(pose_data, combined_strokes, frame_timestamps, output_dir):
+    """Generate a comprehensive report of body angles relative to forces"""
+    print("\n📊 Generating Comprehensive Analysis Report...")
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_path = os.path.join(output_dir, f"rowing_analysis_report_{timestamp}.txt")
+    csv_path = os.path.join(output_dir, f"rowing_analysis_data_{timestamp}.csv")
+    
+    # Create comprehensive report
+    with open(report_path, 'w') as f:
+        f.write("ROWING BIOMECHANICAL ANALYSIS REPORT\n")
+        f.write("=" * 50 + "\n\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Total Frames Analyzed: {len(pose_data)}\n")
+        f.write(f"Total Strokes: {len(combined_strokes)}\n")
+        f.write(f"Analysis Duration: {frame_timestamps[-1]['timestamp_dt'] - frame_timestamps[0]['timestamp_dt']}\n\n")
+        
+        # Stroke summary
+        f.write("STROKE SUMMARY\n")
+        f.write("-" * 20 + "\n")
+        for i, stroke in enumerate(combined_strokes):
+            f.write(f"Stroke {i+1}:\n")
+            f.write(f"  Duration: {stroke['stroke_duration']:.2f}s\n")
+            f.write(f"  Peak Force: {max(stroke['combined_forceplot'])}\n")
+            f.write(f"  Average Power: {stroke['final_power']}W\n")
+            f.write(f"  Stroke Rate: {stroke['final_spm']} spm\n")
+            f.write(f"  Time: {stroke['start_timestamp_dt'].strftime('%H:%M:%S.%f')[:-3]} - {stroke['end_timestamp_dt'].strftime('%H:%M:%S.%f')[:-3]}\n")
+            f.write(f"  Phases: {' -> '.join(stroke['stroke_phases'])}\n\n")
+        
+        # Body angle statistics
+        f.write("BODY ANGLE STATISTICS\n")
+        f.write("-" * 25 + "\n")
+        
+        # Calculate statistics for each angle
+        angles = ['left_arm_angle', 'right_arm_angle', 'left_leg_angle', 'right_leg_angle', 
+                 'back_vertical_angle', 'left_ankle_vertical_angle', 'right_ankle_vertical_angle']
+        
+        for angle in angles:
+            values = [frame.get(angle) for frame in pose_data if frame.get(angle) is not None]
+            if values:
+                f.write(f"{angle.replace('_', ' ').title()}:\n")
+                f.write(f"  Count: {len(values)}\n")
+                f.write(f"  Mean: {np.mean(values):.1f}\n")
+                f.write(f"  Std Dev: {np.std(values):.1f}\n")
+                f.write(f"  Min: {np.min(values):.1f}\n")
+                f.write(f"  Max: {np.max(values):.1f}\n")
+                f.write(f"  Range: {np.max(values) - np.min(values):.1f}\n\n")
+        
+        # Force-angle correlations
+        f.write("FORCE-ANGLE CORRELATIONS\n")
+        f.write("-" * 25 + "\n")
+        
+        # For each stroke, find the corresponding pose data and analyze correlations
+        for i, stroke in enumerate(combined_strokes):
+            f.write(f"Stroke {i+1} Analysis:\n")
+            
+            # Find pose frames during this stroke
+            stroke_start = stroke['start_timestamp_dt']
+            stroke_end = stroke['end_timestamp_dt']
+            
+            stroke_frames = []
+            for j, frame_ts in enumerate(frame_timestamps):
+                if stroke_start <= frame_ts['timestamp_dt'] <= stroke_end and j < len(pose_data):
+                    stroke_frames.append((j, pose_data[j]))
+            
+            if stroke_frames:
+                f.write(f"  Frames during stroke: {len(stroke_frames)}\n")
+                
+                # Calculate average angles during stroke
+                for angle in angles:
+                    values = [frame.get(angle) for _, frame in stroke_frames if frame.get(angle) is not None]
+                    if values:
+                        f.write(f"  {angle.replace('_', ' ').title()}: {np.mean(values):.1f} (avg)\n")
+                
+                # Force curve analysis
+                force_curve = stroke['combined_forceplot']
+                if force_curve:
+                    f.write(f"  Force Curve Points: {len(force_curve)}\n")
+                    f.write(f"  Peak Force: {max(force_curve)}\n")
+                    f.write(f"  Average Force: {np.mean(force_curve):.1f}\n")
+                    f.write(f"  Force Range: {max(force_curve) - min(force_curve)}\n")
+            f.write("\n")
+    
+    # Create detailed CSV data
+    with open(csv_path, 'w', newline='') as f:
+        fieldnames = ['frame_number', 'timestamp', 'frame_time'] + angles + ['force_peak', 'force_avg', 'stroke_number', 'stroke_phase']
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        for i, (frame_ts, pose_frame) in enumerate(zip(frame_timestamps, pose_data)):
+            row = {
+                'frame_number': i,
+                'timestamp': frame_ts['timestamp_dt'].isoformat(),
+                'frame_time': pose_frame.get('frame_time', ''),
+            }
+            
+            # Add angle data
+            for angle in angles:
+                row[angle] = pose_frame.get(angle)
+            
+            # Find which stroke this frame belongs to
+            current_time = frame_ts['timestamp_dt']
+            stroke_num = None
+            stroke_phase = None
+            force_peak = None
+            force_avg = None
+            
+            for j, stroke in enumerate(combined_strokes):
+                if stroke['start_timestamp_dt'] <= current_time <= stroke['end_timestamp_dt']:
+                    stroke_num = j + 1
+                    force_curve = stroke['combined_forceplot']
+                    if force_curve:
+                        force_peak = max(force_curve)
+                        force_avg = np.mean(force_curve)
+                    
+                    # Determine phase within stroke
+                    stroke_duration = (stroke['end_timestamp_dt'] - stroke['start_timestamp_dt']).total_seconds()
+                    time_in_stroke = (current_time - stroke['start_timestamp_dt']).total_seconds()
+                    progress = time_in_stroke / stroke_duration if stroke_duration > 0 else 0
+                    
+                    if progress < 0.3:
+                        stroke_phase = "Drive"
+                    elif progress < 0.7:
+                        stroke_phase = "Dwelling"
+                    else:
+                        stroke_phase = "Recovery"
+                    break
+            
+            row['force_peak'] = force_peak
+            row['force_avg'] = force_avg
+            row['stroke_number'] = stroke_num
+            row['stroke_phase'] = stroke_phase
+            
+            writer.writerow(row)
+    
+    print(f"   📋 Comprehensive report: {report_path}")
+    print(f"   📊 Detailed CSV data: {csv_path}")
+    
+    return report_path, csv_path
 
 def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path, output_dir="complete_kinematics_overlay"):
     """Create complete overlay video with kinematics analysis and force data"""
@@ -702,6 +929,9 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
     cap.release()
     out.release()
     
+    # Generate comprehensive report
+    report_path, csv_path = generate_comprehensive_report(pose_data, combined_strokes, frame_timestamps, output_dir)
+    
     print(f"\n🎉 Complete kinematics overlay video created!")
     print(f"   📹 Output video: {output_path}")
     print(f"   📊 Total frames: {frame_count}")
@@ -710,6 +940,8 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
     print(f"   🔋 Force plot overlays: {force_overlays}")
     print(f"   📊 Force overlay rate: {(force_overlays/frame_count)*100:.1f}%")
     print(f"   🤖 Pose data from: {pose_json_path}")
+    print(f"   📋 Analysis report: {report_path}")
+    print(f"   📊 Detailed data: {csv_path}")
 
 def main():
     parser = argparse.ArgumentParser(description="Create complete kinematics overlay with force data")

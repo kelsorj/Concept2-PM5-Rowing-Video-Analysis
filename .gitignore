@@ -7,3 +7,6 @@ advanced_analysis/*.mp4
 *.mp4
 advanced_analysis/.DS_Store
 advanced_analysis/*.txt
+complete_kinematics_overlay/pose_data_20251004_181210.json
+complete_kinematics_overlay/rowing_analysis_report_20251004_181254.txt
+complete_kinematics_overlay_fixed/pose_data_20251004_181635.json
