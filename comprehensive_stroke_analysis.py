@@ -612,19 +612,96 @@ class ComprehensiveStrokeAnalysis:
             pct = (hip_y - wrist_y) / denom * 100.0
             return float(np.clip(pct, 0.0, 100.0))
 
-        # Determine catch and finish timestamps from PM5 phases
-        first_drive = None
-        last_drive = None
-        for m in stroke.get('measurements', []):
-            if m.get('strokestate') == 'Drive' and first_drive is None:
-                first_drive = m.get('timestamp_dt')
-            if m.get('strokestate') in ['Drive', 'Dwelling']:
-                last_drive = m.get('timestamp_dt')
-        catch_dt = first_drive or stroke['start_timestamp_dt']
-        finish_dt = last_drive or stroke['end_timestamp_dt']
-
-        catch_pose = find_nearest_frame(catch_dt) or {}
-        finish_pose = find_nearest_frame(finish_dt) or {}
+        # Determine catch and finish using kinematics (X position) + force data
+        # Strategy: Find when body starts moving in the drive direction as force increases
+        
+        # Get frames within this stroke's time range (expand by 0.2s before to catch the actual catch)
+        stroke_start_expanded = stroke['start_timestamp_dt'] - pd.Timedelta(seconds=0.2)
+        stroke_frames = []
+        for item in mapped_frames:
+            if stroke_start_expanded <= item['ts'] <= stroke['end_timestamp_dt']:
+                stroke_frames.append(item)
+        
+        if len(stroke_frames) < 3:
+            # Fallback to PM5 timing if not enough frames
+            first_drive = None
+            last_drive = None
+            for m in stroke.get('measurements', []):
+                if m.get('strokestate') == 'Drive' and first_drive is None:
+                    first_drive = m.get('timestamp_dt')
+                if m.get('strokestate') in ['Drive', 'Dwelling']:
+                    last_drive = m.get('timestamp_dt')
+            catch_dt = first_drive or stroke['start_timestamp_dt']
+            finish_dt = last_drive or stroke['end_timestamp_dt']
+            catch_pose = find_nearest_frame(catch_dt) or {}
+            finish_pose = find_nearest_frame(finish_dt) or {}
+        else:
+            # Use kinematics to find actual catch and finish
+            # Extract hip X positions (average of left and right)
+            hip_x_positions = []
+            valid_frames = []
+            for item in stroke_frames:
+                fr = item['frame']
+                left_hip_x = fr.get('left_hip_x')
+                right_hip_x = fr.get('right_hip_x')
+                left_conf = fr.get('left_hip_confidence', 0)
+                right_conf = fr.get('right_hip_confidence', 0)
+                
+                if left_hip_x is not None and right_hip_x is not None and left_conf > 0.5 and right_conf > 0.5:
+                    hip_x_positions.append((left_hip_x + right_hip_x) / 2.0)
+                    valid_frames.append(item)
+            
+            if len(valid_frames) < 3:
+                # Fallback
+                catch_pose = stroke_frames[0]['frame']
+                finish_pose = stroke_frames[len(stroke_frames)//2]['frame']
+            else:
+                # Determine drive direction: compare start vs end of stroke
+                start_x = np.mean(hip_x_positions[:min(5, len(hip_x_positions)//4)])
+                end_x = np.mean(hip_x_positions[-min(5, len(hip_x_positions)//4):])
+                
+                drive_direction = 'left' if start_x > end_x else 'right'
+                
+                # Find catch: Look for the frame where hip X is at extreme AND velocity is near zero
+                # This is right before the drive starts
+                hip_x_array = np.array(hip_x_positions)
+                
+                # Calculate velocity (change in position)
+                velocity = np.gradient(hip_x_array)
+                
+                # Find the extreme position in the first half of the stroke
+                first_half = len(hip_x_positions) // 2
+                if drive_direction == 'left':
+                    # Look for maximum X (rightmost) in first half where velocity is about to go negative
+                    candidates = []
+                    for i in range(min(first_half, len(hip_x_positions) - 1)):
+                        if hip_x_array[i] >= np.percentile(hip_x_array[:first_half], 95):
+                            # At or near maximum position
+                            if i < len(velocity) - 1 and velocity[i+1] < 0:
+                                # Next frame starts moving left (negative velocity)
+                                candidates.append(i)
+                    catch_idx = candidates[0] if candidates else int(np.argmax(hip_x_array[:first_half]))
+                else:
+                    # Look for minimum X (leftmost) in first half where velocity is about to go positive
+                    candidates = []
+                    for i in range(min(first_half, len(hip_x_positions) - 1)):
+                        if hip_x_array[i] <= np.percentile(hip_x_array[:first_half], 5):
+                            # At or near minimum position
+                            if i < len(velocity) - 1 and velocity[i+1] > 0:
+                                # Next frame starts moving right (positive velocity)
+                                candidates.append(i)
+                    catch_idx = candidates[0] if candidates else int(np.argmin(hip_x_array[:first_half]))
+                
+                # Find finish: the opposite extreme
+                if drive_direction == 'left':
+                    finish_idx = int(np.argmin(hip_x_positions))
+                else:
+                    finish_idx = int(np.argmax(hip_x_positions))
+                
+                catch_pose = valid_frames[catch_idx]['frame']
+                finish_pose = valid_frames[finish_idx]['frame']
+                catch_dt = valid_frames[catch_idx]['ts']
+                finish_dt = valid_frames[finish_idx]['ts']
 
         layback = finish_pose.get('back_vertical_angle')
         legs_unbent = mean_or_none([finish_pose.get('left_leg_angle'), finish_pose.get('right_leg_angle')])
@@ -635,9 +712,21 @@ class ComprehensiveStrokeAnalysis:
         elbows_unbent = mean_or_none([catch_pose.get('left_arm_angle'), catch_pose.get('right_arm_angle')])
 
         # Sequence metrics based on angle gradients across drive
-        # Collect frames within drive
-        drive_start = first_drive or stroke['start_timestamp_dt']
-        drive_end = last_drive or stroke.get('end_timestamp_dt', drive_start)
+        # Collect frames within drive (using kinematic-based catch/finish if available)
+        if 'catch_dt' in locals() and 'finish_dt' in locals():
+            drive_start = catch_dt
+            drive_end = finish_dt
+        else:
+            # Fallback to PM5 timing
+            first_drive = None
+            last_drive = None
+            for m in stroke.get('measurements', []):
+                if m.get('strokestate') == 'Drive' and first_drive is None:
+                    first_drive = m.get('timestamp_dt')
+                if m.get('strokestate') in ['Drive', 'Dwelling']:
+                    last_drive = m.get('timestamp_dt')
+            drive_start = first_drive or stroke['start_timestamp_dt']
+            drive_end = last_drive or stroke.get('end_timestamp_dt', drive_start)
         ts_list = []
         legs_series = []
         back_series = []
