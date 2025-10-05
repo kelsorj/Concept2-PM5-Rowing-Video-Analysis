@@ -748,80 +748,122 @@ class ComprehensiveStrokeAnalysis:
         ax_sequence = fig.add_subplot(gs[2, :])
         self.create_sequence_plot(ax_sequence, sequence_data, stroke_number)
 
-        # Create compact metrics UI (bottom row)
+        # Create compact metrics UI (bottom row) - THREE COLUMNS like example image
         ax_table = fig.add_subplot(gs[3, :])
         ax_table.axis('off')
         metrics = sequence_data.get('coaching_metrics')
         if metrics:
-            # Generic gauge helpers with explicit domain scaling
-            def draw_gauge_range(ax, x, y, w, h, value, ok_low, ok_high, scale_min, scale_max, unit="°", label=""):
-                ax.add_patch(patches.FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.02", facecolor="#eeeeee", edgecolor="#cccccc"))
-                # Green acceptable band
-                ok_x1 = x + ((ok_low - scale_min) / (scale_max - scale_min)) * w
-                ok_x2 = x + ((ok_high - scale_min) / (scale_max - scale_min)) * w
-                ax.add_patch(patches.FancyBboxPatch((min(ok_x1, ok_x2), y), abs(ok_x2 - ok_x1), h, boxstyle="round,pad=0.02", facecolor="#b8e6b8", edgecolor="none", alpha=0.9))
-                # Value marker
+            # Helper to draw a single metric row with label, gauge, and value
+            def draw_metric_row(ax, x, y, w, h, label, value, ideal_low, ideal_high, scale_min, scale_max, is_min_threshold=False):
+                """Draw one metric row: everything INSIDE the gauge bar"""
+                
+                # Determine if value is in range for color coding
                 try:
-                    v = float(str(value).replace('N/A','nan'))
-                except Exception:
+                    v = float(str(value).replace('N/A','nan').replace('°','').replace('%',''))
+                except:
                     v = float('nan')
+                
+                in_range = False
+                if not np.isnan(v):
+                    if is_min_threshold:
+                        in_range = v >= ideal_low
+                    else:
+                        in_range = ideal_low <= v <= ideal_high
+                
+                # Draw full-width gauge bar with color coding
+                bg_color = "#d3d3d3" if in_range else "#FFD580"
+                ax.add_patch(patches.Rectangle((x, y), w, h, 
+                            facecolor=bg_color, edgecolor="#888888", linewidth=0.5))
+                
+                # Green ideal range band
+                if is_min_threshold:
+                    ok_x1 = x + ((ideal_low - scale_min) / (scale_max - scale_min)) * w
+                    ok_w = (x + w) - ok_x1
+                    ax.add_patch(patches.Rectangle((ok_x1, y), ok_w, h,
+                                facecolor="#90EE90", edgecolor="none", alpha=0.7))
+                    # Show threshold value inside green band
+                    ax.text(ok_x1 + 0.005, y + h*0.5, f"{ideal_low}", ha='left', va='center', 
+                           fontsize=9, color="#006400", fontweight='bold', zorder=5)
+                else:
+                    ok_x1 = x + ((ideal_low - scale_min) / (scale_max - scale_min)) * w
+                    ok_x2 = x + ((ideal_high - scale_min) / (scale_max - scale_min)) * w
+                    ok_w = ok_x2 - ok_x1
+                    ax.add_patch(patches.Rectangle((ok_x1, y), ok_w, h,
+                                facecolor="#90EE90", edgecolor="none", alpha=0.7))
+                    # Show both endpoints inside green band
+                    ax.text(ok_x1 + 0.005, y + h*0.5, f"{ideal_low}", ha='left', va='center', 
+                           fontsize=9, color="#006400", fontweight='bold', zorder=5)
+                    ax.text(ok_x2 - 0.005, y + h*0.5, f"{ideal_high}", ha='right', va='center', 
+                           fontsize=9, color="#006400", fontweight='bold', zorder=5)
+                
+                # Draw tick mark for measured value
                 if not np.isnan(v):
                     vx = x + ((v - scale_min) / (scale_max - scale_min)) * w
-                    ax.add_line(plt.Line2D([vx, vx], [y-0.12*h, y+h*1.12], color="#333333", linewidth=3))
-                    # Measured value centered above bar
-                    ax.text(x + w*0.5, y + h*1.35, f"{value}{unit if 'N/A' not in str(value) else ''}", ha='center', va='bottom', fontsize=12)
-                # Labels
-                ax.text(x-0.010*w, y+h*0.65, label, ha='right', va='center', fontsize=12, fontweight='bold')
-                # Ideal endpoint labels just above the bar near each edge
-                ax.text(ok_x1, y + h*1.15, f"{ok_low}", ha='center', va='bottom', fontsize=10, color="#a06600")
-                ax.text(ok_x2, y + h*1.15, f"{ok_high}", ha='center', va='bottom', fontsize=10, color="#a06600")
-
-            def draw_gauge_min(ax, x, y, w, h, value, ok_min, scale_min, scale_max, unit="°", label=""):
-                ax.add_patch(patches.FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.02", facecolor="#eeeeee", edgecolor="#cccccc"))
-                ok_x1 = x + ((ok_min - scale_min) / (scale_max - scale_min)) * w
-                ax.add_patch(patches.FancyBboxPatch((ok_x1, y), (x+w)-ok_x1, h, boxstyle="round,pad=0.02", facecolor="#b8e6b8", edgecolor="none", alpha=0.9))
-                try:
-                    v = float(str(value).replace('N/A','nan'))
-                except Exception:
-                    v = float('nan')
-                if not np.isnan(v):
-                    vx = x + ((v - scale_min) / (scale_max - scale_min)) * w
-                    ax.add_line(plt.Line2D([vx, vx], [y-0.12*h, y+h*1.12], color="#333333", linewidth=3))
-                    ax.text(x + w*0.5, y + h*1.35, f"{value}{unit if 'N/A' not in str(value) else ''}", ha='center', va='bottom', fontsize=12)
-                ax.text(x-0.010*w, y+h*0.65, label, ha='right', va='center', fontsize=12, fontweight='bold')
-                # Ideal min label on the threshold position
-                ax.text(ok_x1, y + h*1.15, f"{ok_min}", ha='center', va='bottom', fontsize=10, color="#0a6e0a")
-
-            # Layout: three columns (Catch | Finish | Sequence)
-            col_w = 0.28
-            col_gap = 0.06
-            col_x0 = 0.05
-            col_x1 = col_x0 + col_w + col_gap
-            col_x2 = col_x1 + col_w + col_gap
-            base_y = 0.55
-            g_h = 0.10
-            g_gap = 0.20
-            g_w = col_w
-
-            # Column headers
-            ax_table.text(col_x0, base_y + g_gap*2.2, "Catch", fontsize=13, fontweight='bold')
-            ax_table.text(col_x1, base_y + g_gap*2.2, "Finish", fontsize=13, fontweight='bold')
-            ax_table.text(col_x2, base_y + g_gap*2.2, "Sequence", fontsize=13, fontweight='bold')
-
-            # Catch gauges (requested ranges)
-            draw_gauge_range(ax_table, col_x0, base_y + g_gap*1, g_w, g_h, metrics['catch_shins'], -8, 6, -40, 20, "°", "Shins angle")
-            draw_gauge_range(ax_table, col_x0, base_y + g_gap*0, g_w, g_h, metrics['catch_body'], -39, -13, -60, 20, "°", "Forward body")
-            draw_gauge_min(ax_table, col_x0, base_y - g_gap*1, g_w, g_h, metrics['catch_elbows'], 160, 120, 200, "°", "Elbows unbent")
-
-            # Finish gauges
-            draw_gauge_range(ax_table, col_x1, base_y + g_gap*1, g_w, g_h, metrics['finish_layback'], 32, 48, 0, 80, "°", "Layback")
-            draw_gauge_min(ax_table, col_x1, base_y + 0* g_gap, g_w, g_h, metrics['finish_legs'], 164, 120, 200, "°", "Legs unbent")
-            draw_gauge_range(ax_table, col_x1, base_y - g_gap*1, g_w, g_h, metrics['finish_handle'], 40, 80, 0, 100, "%", "Handle @ torso")
-
-            # Sequence quick values (right column)
-            ax_table.text(col_x2, base_y + g_gap*1, f"Legs→Back: {metrics['sep_lb']}%", fontsize=13)
-            ax_table.text(col_x2, base_y + 0* g_gap, f"Back→Arms: {metrics['sep_ba']}%", fontsize=13)
-            ax_table.text(col_x2, base_y - g_gap*1, f"Drive ratio: {metrics['drive_ratio']}%", fontsize=13)
+                    vx = max(x, min(x + w, vx))
+                    ax.add_line(plt.Line2D([vx, vx], [y, y+h], color="#000000", linewidth=4, zorder=10))
+                
+                # Draw label INSIDE on the left
+                ax.text(x + 0.005, y + h*0.5, label, ha='left', va='center', fontsize=10, zorder=11)
+                
+                # Draw measured value INSIDE on the right
+                ax.text(x + w - 0.005, y + h*0.5, value, ha='right', va='center', fontsize=11, fontweight='bold', zorder=11)
+            
+            # Layout: Three columns (Catch | Finish | Sequence)
+            col_w = 0.31
+            col_gap = 0.03
+            x_catch = 0.01
+            x_finish = x_catch + col_w + col_gap
+            x_sequence = x_finish + col_w + col_gap
+            
+            base_y = 0.68
+            row_h = 0.16  # Tall rows
+            row_gap = 0.08  # Good spacing between rows
+            header_offset = 0.18
+            
+            # CATCH COLUMN
+            ax_table.text(x_catch, base_y + header_offset, "Catch", fontsize=14, fontweight='bold', va='bottom')
+            
+            draw_metric_row(ax_table, x_catch, base_y - row_gap*0, col_w, row_h,
+                          "Shins angle", f"{metrics['catch_shins']}°",
+                          -8, 6, -40, 20, is_min_threshold=False)
+            
+            draw_metric_row(ax_table, x_catch, base_y - row_gap*1 - row_h*1, col_w, row_h,
+                          "Forward body angle", f"{metrics['catch_body']}°",
+                          -39, -13, -60, 20, is_min_threshold=False)
+            
+            draw_metric_row(ax_table, x_catch, base_y - row_gap*2 - row_h*2, col_w, row_h,
+                          "Elbows unbent", f"{metrics['catch_elbows']}°",
+                          160, 180, 120, 200, is_min_threshold=True)
+            
+            # FINISH COLUMN
+            ax_table.text(x_finish, base_y + header_offset, "Finish", fontsize=14, fontweight='bold', va='bottom')
+            
+            draw_metric_row(ax_table, x_finish, base_y - row_gap*0, col_w, row_h,
+                          "Layback body angle", f"{metrics['finish_layback']}°",
+                          32, 48, 0, 80, is_min_threshold=False)
+            
+            draw_metric_row(ax_table, x_finish, base_y - row_gap*1 - row_h*1, col_w, row_h,
+                          "Legs unbent", f"{metrics['finish_legs']}°",
+                          164, 180, 120, 200, is_min_threshold=True)
+            
+            draw_metric_row(ax_table, x_finish, base_y - row_gap*2 - row_h*2, col_w, row_h,
+                          "Handle height at torso", f"{metrics['finish_handle']}%",
+                          40, 80, 0, 100, is_min_threshold=False)
+            
+            # SEQUENCE COLUMN
+            ax_table.text(x_sequence, base_y + header_offset, "Sequence", fontsize=14, fontweight='bold', va='bottom')
+            
+            draw_metric_row(ax_table, x_sequence, base_y - row_gap*0, col_w, row_h,
+                          "Drive Legs&Back separation", f"{metrics['sep_lb']}%",
+                          75, 100, 0, 100, is_min_threshold=True)
+            
+            draw_metric_row(ax_table, x_sequence, base_y - row_gap*1 - row_h*1, col_w, row_h,
+                          "Drive Back&Arms separation", f"{metrics['sep_ba']}%",
+                          30, 100, 0, 100, is_min_threshold=True)
+            
+            draw_metric_row(ax_table, x_sequence, base_y - row_gap*2 - row_h*2, col_w, row_h,
+                          "Drive duration ratio", f"{metrics['drive_ratio']}%",
+                          30, 50, 0, 100, is_min_threshold=False)
         
         plt.tight_layout()
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
