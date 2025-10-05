@@ -2083,39 +2083,379 @@ class ComprehensiveStrokeAnalysis:
         """Create an interactive dashboard where users can choose which angle goes on which axis"""
         print("🎛️ Creating interactive axis dashboard...")
         
-        # For now, create a simple placeholder that redirects to the standalone tool
-        output_dir = os.path.join(analysis_dir, "3d_animations")
-        os.makedirs(output_dir, exist_ok=True)
+        data = self.load_stroke_data_for_3d(analysis_dir)
+        if not data:
+            return None
         
-        # Create a simple HTML file that explains how to use the interactive dashboard
-        html_content = """
+        pose_frames = data['pose_frames']
+        frame_timestamps = data['frame_timestamps']
+        combined_strokes = data['combined_strokes']
+        
+        if not combined_strokes:
+            print("❌ No stroke data found")
+            return None
+        
+        # Collect all stroke data with all available angles
+        all_stroke_data = []
+        all_angles = {
+            'leg_angle': [],
+            'back_angle': [],
+            'arm_angle': [],
+            'left_leg_angle': [],
+            'right_leg_angle': [],
+            'left_arm_angle': [],
+            'right_arm_angle': [],
+            'left_shoulder_angle': [],
+            'right_shoulder_angle': [],
+            'left_hip_angle': [],
+            'right_hip_angle': [],
+            'left_knee_angle': [],
+            'right_knee_angle': [],
+            'left_elbow_angle': [],
+            'right_elbow_angle': []
+        }
+        all_forces = []
+        
+        for stroke_idx, stroke in enumerate(combined_strokes):
+            stroke_data = []
+            
+            # Get frames for this stroke
+            for i, ft in enumerate(frame_timestamps):
+                if stroke['start_timestamp'] <= ft['timestamp'] <= stroke['end_timestamp']:
+                    if i < len(pose_frames):
+                        frame = pose_frames[i]
+                        
+                        # Calculate all available angles
+                        leg_angle = np.mean([v for v in [frame.get('left_leg_angle'), frame.get('right_leg_angle')] if v is not None])
+                        back_angle = frame.get('back_vertical_angle')
+                        arm_angle = np.mean([v for v in [frame.get('left_arm_angle'), frame.get('right_arm_angle')] if v is not None])
+                        
+                        frame_data = {
+                            'time': (ft['timestamp'] - stroke['start_timestamp']).total_seconds(),
+                            'frame_idx': ft['frame_idx'],
+                            'stroke_number': stroke_idx + 1,
+                            'leg_angle': leg_angle if not np.isnan(leg_angle) else None,
+                            'back_angle': back_angle,
+                            'arm_angle': arm_angle if not np.isnan(arm_angle) else None,
+                            'left_leg_angle': frame.get('left_leg_angle'),
+                            'right_leg_angle': frame.get('right_leg_angle'),
+                            'left_arm_angle': frame.get('left_arm_angle'),
+                            'right_arm_angle': frame.get('right_arm_angle'),
+                            'left_shoulder_angle': frame.get('left_shoulder_angle'),
+                            'right_shoulder_angle': frame.get('right_shoulder_angle'),
+                            'left_hip_angle': frame.get('left_hip_angle'),
+                            'right_hip_angle': frame.get('right_hip_angle'),
+                            'left_knee_angle': frame.get('left_knee_angle'),
+                            'right_knee_angle': frame.get('right_knee_angle'),
+                            'left_elbow_angle': frame.get('left_elbow_angle'),
+                            'right_elbow_angle': frame.get('right_elbow_angle')
+                        }
+                        
+                        stroke_data.append(frame_data)
+            
+            if len(stroke_data) > 0:
+                # Map force data to frames
+                force_curve = stroke['combined_forceplot']
+                if force_curve:
+                    for i, frame_data in enumerate(stroke_data):
+                        time_ratio = frame_data['time'] / stroke_data[-1]['time']
+                        force_idx = int(time_ratio * (len(force_curve) - 1))
+                        force_idx = min(force_idx, len(force_curve) - 1)
+                        frame_data['force'] = force_curve[force_idx]
+                else:
+                    for frame_data in stroke_data:
+                        frame_data['force'] = 0
+                
+                all_stroke_data.append(stroke_data)
+                
+                # Collect all angle values for range calculation
+                for frame_data in stroke_data:
+                    for angle_name in all_angles.keys():
+                        if frame_data.get(angle_name) is not None:
+                            all_angles[angle_name].append(frame_data[angle_name])
+                    all_forces.append(frame_data['force'])
+        
+        if not all_stroke_data:
+            print("❌ No valid stroke data found")
+            return None
+        
+        # Calculate ranges for all angles
+        angle_ranges = {}
+        for angle_name, values in all_angles.items():
+            if values:
+                min_val, max_val = min(values), max(values)
+                angle_ranges[angle_name] = [min_val - 10, max_val + 10]
+            else:
+                angle_ranges[angle_name] = [-50, 50]  # Default range
+        
+        force_min, force_max = min(all_forces), max(all_forces)
+        
+        # Create HTML with interactive controls
+        stroke_data_json = json.dumps(all_stroke_data)
+        angle_ranges_json = json.dumps(angle_ranges)
+        
+        html_content = f"""
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Interactive Dashboard - Use Standalone Tool</title>
+            <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
             <style>
-                body { font-family: Arial, sans-serif; margin: 40px; }
-                .info { background-color: #e8f4f8; padding: 20px; border-radius: 10px; border-left: 4px solid #2196F3; }
-                .command { background-color: #f0f0f0; padding: 10px; border-radius: 5px; font-family: monospace; }
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                .controls {{ 
+                    background-color: #f0f0f0; 
+                    padding: 20px; 
+                    border-radius: 10px; 
+                    margin-bottom: 20px;
+                    display: flex;
+                    gap: 30px;
+                    flex-wrap: wrap;
+                }}
+                .axis-control {{ 
+                    display: flex; 
+                    flex-direction: column; 
+                    min-width: 200px;
+                }}
+                .axis-control h3 {{ margin: 0 0 10px 0; color: #333; }}
+                .checkbox-group {{ display: flex; flex-direction: column; gap: 5px; }}
+                .checkbox-item {{ display: flex; align-items: center; gap: 8px; }}
+                .checkbox-item input {{ margin: 0; }}
+                .checkbox-item label {{ margin: 0; font-size: 14px; }}
+                #plot {{ width: 100%; height: 800px; }}
+                .info {{ 
+                    background-color: #e8f4f8; 
+                    padding: 15px; 
+                    border-radius: 5px; 
+                    margin-bottom: 20px;
+                    border-left: 4px solid #2196F3;
+                }}
             </style>
         </head>
         <body>
-            <h1>Interactive Axis Dashboard</h1>
+            <h1>Interactive Rowing Stroke Analysis Dashboard</h1>
+            
             <div class="info">
-                <h3>To create the interactive dashboard with axis selection:</h3>
-                <p>Run the standalone 3D animation tool with the interactive flag:</p>
-                <div class="command">python create_3d_stroke_animation.py analysis_py3rowcap_20251004_123520 --interactive</div>
-                <p>This will create an interactive dashboard where you can select which angle measurements to display on each axis.</p>
+                <strong>Instructions:</strong> Select which angle measurements you want to display on each axis. 
+                You can choose from individual limb angles or averaged values. The color represents force in Newtons.
             </div>
+            
+            <div class="controls">
+                <div class="axis-control">
+                    <h3>X-Axis (Horizontal)</h3>
+                    <div class="checkbox-group">
+                        <div class="checkbox-item">
+                            <input type="radio" name="x-axis" value="leg_angle" id="x-leg" checked>
+                            <label for="x-leg">Leg Angle (avg)</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="x-axis" value="back_angle" id="x-back">
+                            <label for="x-back">Back Angle</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="x-axis" value="arm_angle" id="x-arm">
+                            <label for="x-arm">Arm Angle (avg)</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="x-axis" value="left_leg_angle" id="x-left-leg">
+                            <label for="x-left-leg">Left Leg Angle</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="x-axis" value="right_leg_angle" id="x-right-leg">
+                            <label for="x-right-leg">Right Leg Angle</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="x-axis" value="left_arm_angle" id="x-left-arm">
+                            <label for="x-left-arm">Left Arm Angle</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="x-axis" value="right_arm_angle" id="x-right-arm">
+                            <label for="x-right-arm">Right Arm Angle</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="axis-control">
+                    <h3>Y-Axis (Depth)</h3>
+                    <div class="checkbox-group">
+                        <div class="checkbox-item">
+                            <input type="radio" name="y-axis" value="back_angle" id="y-back" checked>
+                            <label for="y-back">Back Angle</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="y-axis" value="leg_angle" id="y-leg">
+                            <label for="y-leg">Leg Angle (avg)</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="y-axis" value="arm_angle" id="y-arm">
+                            <label for="y-arm">Arm Angle (avg)</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="y-axis" value="left_leg_angle" id="y-left-leg">
+                            <label for="y-left-leg">Left Leg Angle</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="y-axis" value="right_leg_angle" id="y-right-leg">
+                            <label for="y-right-leg">Right Leg Angle</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="y-axis" value="left_arm_angle" id="y-left-arm">
+                            <label for="y-left-arm">Left Arm Angle</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="y-axis" value="right_arm_angle" id="y-right-arm">
+                            <label for="y-right-arm">Right Arm Angle</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="axis-control">
+                    <h3>Z-Axis (Vertical)</h3>
+                    <div class="checkbox-group">
+                        <div class="checkbox-item">
+                            <input type="radio" name="z-axis" value="arm_angle" id="z-arm" checked>
+                            <label for="z-arm">Arm Angle (avg)</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="z-axis" value="leg_angle" id="z-leg">
+                            <label for="z-leg">Leg Angle (avg)</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="z-axis" value="back_angle" id="z-back">
+                            <label for="z-back">Back Angle</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="z-axis" value="left_leg_angle" id="z-left-leg">
+                            <label for="z-left-leg">Left Leg Angle</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="z-axis" value="right_leg_angle" id="z-right-leg">
+                            <label for="z-right-leg">Right Leg Angle</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="z-axis" value="left_arm_angle" id="z-left-arm">
+                            <label for="z-left-arm">Left Arm Angle</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="radio" name="z-axis" value="right_arm_angle" id="z-right-arm">
+                            <label for="z-right-arm">Right Arm Angle</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="plot"></div>
+            
+            <script>
+                // Data from Python
+                const strokeData = {stroke_data_json};
+                const angleRanges = {angle_ranges_json};
+                const forceMin = {force_min};
+                const forceMax = {force_max};
+                
+                function updatePlot() {{
+                    const xAxis = document.querySelector('input[name="x-axis"]:checked').value;
+                    const yAxis = document.querySelector('input[name="y-axis"]:checked').value;
+                    const zAxis = document.querySelector('input[name="z-axis"]:checked').value;
+                    
+                    const traces = [];
+                    const colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan'];
+                    
+                    strokeData.forEach((stroke, strokeIdx) => {{
+                        const xValues = stroke.map(d => d[xAxis]).filter(v => v !== null && !isNaN(v));
+                        const yValues = stroke.map(d => d[yAxis]).filter(v => v !== null && !isNaN(v));
+                        const zValues = stroke.map(d => d[zAxis]).filter(v => v !== null && !isNaN(v));
+                        const forces = stroke.map(d => d.force);
+                        
+                        if (xValues.length > 0 && yValues.length > 0 && zValues.length > 0) {{
+                            const color = colors[strokeIdx % colors.length];
+                            
+                            traces.push({{
+                                x: xValues,
+                                y: yValues,
+                                z: zValues,
+                                type: 'scatter3d',
+                                mode: 'lines+markers',
+                                marker: {{
+                                    size: 4,
+                                    color: forces,
+                                    colorscale: 'Viridis',
+                                    cmin: forceMin,
+                                    cmax: forceMax,
+                                    showscale: strokeIdx === 0,
+                                    colorbar: {{
+                                        title: "Force (N)",
+                                        x: 1.05,
+                                        len: 0.7,
+                                        y: 0.5,
+                                        yanchor: 'middle'
+                                    }},
+                                    line: {{ color: color, width: 1 }}
+                                }},
+                                line: {{
+                                    color: color,
+                                    width: 3
+                                }},
+                                name: `Stroke ${{strokeIdx + 1}}`,
+                                hovertemplate: `<b>Stroke ${{strokeIdx + 1}}</b><br>` +
+                                             `${{xAxis}}: %{{x:.1f}}°<br>` +
+                                             `${{yAxis}}: %{{y:.1f}}°<br>` +
+                                             `${{zAxis}}: %{{z:.1f}}°<br>` +
+                                             `Force: %{{marker.color:.1f}} N<br>` +
+                                             `<extra></extra>`
+                            }});
+                        }}
+                    }});
+                    
+                    const layout = {{
+                        title: `Interactive Stroke Analysis - ${{strokeData.length}} Strokes`,
+                        scene: {{
+                            xaxis: {{ title: `${{xAxis.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase())}} (°)`, range: angleRanges[xAxis], autorange: false }},
+                            yaxis: {{ title: `${{yAxis.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase())}} (°)`, range: angleRanges[yAxis], autorange: false }},
+                            zaxis: {{ title: `${{zAxis.replace('_', ' ').replace(/\\b\\w/g, l => l.toUpperCase())}} (°)`, range: angleRanges[zAxis], autorange: false }},
+                            camera: {{
+                                eye: {{ x: 1.5, y: 1.5, z: 1.2 }},
+                                center: {{ x: 0, y: 0, z: 0 }},
+                                up: {{ x: 0, y: 0, z: 1 }}
+                            }},
+                            aspectmode: 'cube'
+                        }},
+                        height: 800,
+                        width: 1400,
+                        showlegend: true,
+                        legend: {{
+                            x: 0.02,
+                            y: 0.98,
+                            yanchor: 'top',
+                            xanchor: 'left',
+                            bgcolor: 'rgba(255,255,255,0.8)',
+                            bordercolor: 'rgba(0,0,0,0.2)',
+                            borderwidth: 1
+                        }},
+                        margin: {{ l: 0, r: 120, t: 50, b: 0 }}
+                    }};
+                    
+                    Plotly.newPlot('plot', traces, layout);
+                }}
+                
+                // Add event listeners
+                document.querySelectorAll('input[name="x-axis"], input[name="y-axis"], input[name="z-axis"]').forEach(input => {{
+                    input.addEventListener('change', updatePlot);
+                }});
+                
+                // Initial plot
+                updatePlot();
+            </script>
         </body>
         </html>
         """
         
-        output_path = os.path.join(output_dir, "interactive_dashboard_info.html")
+        # Save to HTML
+        output_dir = os.path.join(analysis_dir, "3d_animations")
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, "interactive_axis_dashboard.html")
         with open(output_path, 'w') as f:
             f.write(html_content)
         
-        print(f"   ✅ Created info page: {os.path.basename(output_path)}")
+        print(f"   ✅ Saved interactive dashboard: {os.path.basename(output_path)}")
         return output_path
 
 def main():
