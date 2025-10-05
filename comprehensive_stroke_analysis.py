@@ -1013,11 +1013,13 @@ class ComprehensiveStrokeAnalysis:
                     ok_w = ok_x2 - ok_x1
                     ax.add_patch(patches.Rectangle((ok_x1, y), ok_w, h,
                                 facecolor="#90EE90", edgecolor="none", alpha=0.7))
-                    # Show both endpoints inside green band
-                    ax.text(ok_x1 + 0.005, y + h*0.5, f"{ideal_low}", ha='left', va='center', 
-                           fontsize=9, color="#006400", fontweight='bold', zorder=5)
-                    ax.text(ok_x2 - 0.005, y + h*0.5, f"{ideal_high}", ha='right', va='center', 
-                           fontsize=9, color="#006400", fontweight='bold', zorder=5)
+                    # Show both endpoints above the green band, aligned with the edges
+                    ax.text(ok_x1, y + h*1.15, f"{ideal_low}", ha='center', va='bottom', 
+                           fontsize=9, color="#006400", fontweight='bold', zorder=5,
+                           bbox=dict(facecolor='white', edgecolor='none', alpha=0.8, pad=1))
+                    ax.text(ok_x2, y + h*1.15, f"{ideal_high}", ha='center', va='bottom', 
+                           fontsize=9, color="#006400", fontweight='bold', zorder=5,
+                           bbox=dict(facecolor='white', edgecolor='none', alpha=0.8, pad=1))
                 
                 # Draw tick mark for measured value
                 if not np.isnan(v):
