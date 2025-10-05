@@ -13,6 +13,7 @@ import glob
 import csv
 from datetime import datetime
 import matplotlib.pyplot as plt
+from matplotlib import patches
 import argparse
 
 class ComprehensiveStrokeAnalysis:
@@ -699,7 +700,7 @@ class ComprehensiveStrokeAnalysis:
         fig = plt.figure(figsize=(20, 12))
         
         # Create grid layout
-        gs = fig.add_gridspec(4, 6, height_ratios=[2, 2, 1.2, 0.8], width_ratios=[1, 1, 1, 1, 1, 1])
+        gs = fig.add_gridspec(4, 6, height_ratios=[2, 2, 1.0, 1.2], width_ratios=[1, 1, 1, 1, 1, 1])
         
         # Add main title
         fig.suptitle(f'Stroke #{stroke_number} - Comprehensive Analysis', fontsize=20, fontweight='bold')
@@ -747,21 +748,80 @@ class ComprehensiveStrokeAnalysis:
         ax_sequence = fig.add_subplot(gs[2, :])
         self.create_sequence_plot(ax_sequence, sequence_data, stroke_number)
 
-        # Create compact metrics table (bottom row)
+        # Create compact metrics UI (bottom row)
         ax_table = fig.add_subplot(gs[3, :])
         ax_table.axis('off')
         metrics = sequence_data.get('coaching_metrics')
         if metrics:
-            table_data = [
-                ["Finish", f"Layback: {metrics['finish_layback']}°", f"Legs: {metrics['finish_legs']}°", f"Handle: {metrics['finish_handle']}%"],
-                ["Catch", f"Shins: {metrics['catch_shins']}°", f"Body: {metrics['catch_body']}°", f"Elbows: {metrics['catch_elbows']}°"],
-                ["Sequence", f"Legs→Back: {metrics['sep_lb']}%", f"Back→Arms: {metrics['sep_ba']}%", f"Drive: {metrics['drive_ratio']}%"],
-            ]
-            col_labels = ["Section", "Metric 1", "Metric 2", "Metric 3"]
-            table = ax_table.table(cellText=table_data, colLabels=col_labels, loc='center')
-            table.auto_set_font_size(False)
-            table.set_fontsize(10)
-            table.scale(1, 1.4)
+            # Generic gauge helpers with explicit domain scaling
+            def draw_gauge_range(ax, x, y, w, h, value, ok_low, ok_high, scale_min, scale_max, unit="°", label=""):
+                ax.add_patch(patches.FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.02", facecolor="#eeeeee", edgecolor="#cccccc"))
+                # Green acceptable band
+                ok_x1 = x + ((ok_low - scale_min) / (scale_max - scale_min)) * w
+                ok_x2 = x + ((ok_high - scale_min) / (scale_max - scale_min)) * w
+                ax.add_patch(patches.FancyBboxPatch((min(ok_x1, ok_x2), y), abs(ok_x2 - ok_x1), h, boxstyle="round,pad=0.02", facecolor="#b8e6b8", edgecolor="none", alpha=0.9))
+                # Value marker
+                try:
+                    v = float(str(value).replace('N/A','nan'))
+                except Exception:
+                    v = float('nan')
+                if not np.isnan(v):
+                    vx = x + ((v - scale_min) / (scale_max - scale_min)) * w
+                    ax.add_line(plt.Line2D([vx, vx], [y-0.12*h, y+h*1.12], color="#333333", linewidth=3))
+                    # Measured value centered above bar
+                    ax.text(x + w*0.5, y + h*1.35, f"{value}{unit if 'N/A' not in str(value) else ''}", ha='center', va='bottom', fontsize=12)
+                # Labels
+                ax.text(x-0.010*w, y+h*0.65, label, ha='right', va='center', fontsize=12, fontweight='bold')
+                # Ideal endpoint labels just above the bar near each edge
+                ax.text(ok_x1, y + h*1.15, f"{ok_low}", ha='center', va='bottom', fontsize=10, color="#a06600")
+                ax.text(ok_x2, y + h*1.15, f"{ok_high}", ha='center', va='bottom', fontsize=10, color="#a06600")
+
+            def draw_gauge_min(ax, x, y, w, h, value, ok_min, scale_min, scale_max, unit="°", label=""):
+                ax.add_patch(patches.FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.02", facecolor="#eeeeee", edgecolor="#cccccc"))
+                ok_x1 = x + ((ok_min - scale_min) / (scale_max - scale_min)) * w
+                ax.add_patch(patches.FancyBboxPatch((ok_x1, y), (x+w)-ok_x1, h, boxstyle="round,pad=0.02", facecolor="#b8e6b8", edgecolor="none", alpha=0.9))
+                try:
+                    v = float(str(value).replace('N/A','nan'))
+                except Exception:
+                    v = float('nan')
+                if not np.isnan(v):
+                    vx = x + ((v - scale_min) / (scale_max - scale_min)) * w
+                    ax.add_line(plt.Line2D([vx, vx], [y-0.12*h, y+h*1.12], color="#333333", linewidth=3))
+                    ax.text(x + w*0.5, y + h*1.35, f"{value}{unit if 'N/A' not in str(value) else ''}", ha='center', va='bottom', fontsize=12)
+                ax.text(x-0.010*w, y+h*0.65, label, ha='right', va='center', fontsize=12, fontweight='bold')
+                # Ideal min label on the threshold position
+                ax.text(ok_x1, y + h*1.15, f"{ok_min}", ha='center', va='bottom', fontsize=10, color="#0a6e0a")
+
+            # Layout: three columns (Catch | Finish | Sequence)
+            col_w = 0.28
+            col_gap = 0.05
+            col_x0 = 0.05
+            col_x1 = col_x0 + col_w + col_gap
+            col_x2 = col_x1 + col_w + col_gap
+            base_y = 0.25
+            g_h = 0.09
+            g_gap = 0.11
+            g_w = col_w
+
+            # Column headers
+            ax_table.text(col_x0, base_y + g_gap*2.2, "Catch", fontsize=13, fontweight='bold')
+            ax_table.text(col_x1, base_y + g_gap*2.2, "Finish", fontsize=13, fontweight='bold')
+            ax_table.text(col_x2, base_y + g_gap*2.2, "Sequence", fontsize=13, fontweight='bold')
+
+            # Catch gauges (requested ranges)
+            draw_gauge_range(ax_table, col_x0, base_y + g_gap*1, g_w, g_h, metrics['catch_shins'], -8, 6, -40, 20, "°", "Shins angle")
+            draw_gauge_range(ax_table, col_x0, base_y + g_gap*0, g_w, g_h, metrics['catch_body'], -39, -13, -60, 20, "°", "Forward body")
+            draw_gauge_min(ax_table, col_x0, base_y - g_gap*1, g_w, g_h, metrics['catch_elbows'], 160, 120, 200, "°", "Elbows unbent")
+
+            # Finish gauges
+            draw_gauge_range(ax_table, col_x1, base_y + g_gap*1, g_w, g_h, metrics['finish_layback'], 32, 48, 0, 80, "°", "Layback")
+            draw_gauge_min(ax_table, col_x1, base_y + g_gap*0, g_w, g_h, metrics['finish_legs'], 164, 120, 200, "°", "Legs unbent")
+            draw_gauge_range(ax_table, col_x1, base_y - g_gap*1, g_w, g_h, metrics['finish_handle'], 40, 80, 0, 100, "%", "Handle @ torso")
+
+            # Sequence quick values (right column)
+            ax_table.text(col_x2, base_y + g_gap*1, f"Legs→Back: {metrics['sep_lb']}%", fontsize=12)
+            ax_table.text(col_x2, base_y + g_gap*0, f"Back→Arms: {metrics['sep_ba']}%", fontsize=12)
+            ax_table.text(col_x2, base_y - g_gap*1, f"Drive ratio: {metrics['drive_ratio']}%", fontsize=12)
         
         plt.tight_layout()
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
