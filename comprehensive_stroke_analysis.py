@@ -1316,17 +1316,213 @@ class ComprehensiveStrokeAnalysis:
         output_dir = os.path.join(analysis_dir, "comprehensive_analyses")
         os.makedirs(output_dir, exist_ok=True)
         
+        # Collect metrics and force curves for summary
+        all_stroke_metrics = {}
+        all_force_curves = []
+        
         # Generate analyses for each stroke
         generated_reports = []
         for stroke_num in strokes:
             stroke_dir = self.generate_stroke_comprehensive_analysis(data, int(stroke_num), output_dir)
             if stroke_dir:
                 generated_reports.append(stroke_dir)
+            
+            # Collect metrics for summary
+            metrics = self.compute_coaching_metrics_for_stroke(int(stroke_num), data)
+            if metrics:
+                all_stroke_metrics[int(stroke_num)] = metrics
+            
+            # Collect force curve
+            combined_strokes = data.get('combined_strokes')
+            if combined_strokes and int(stroke_num) <= len(combined_strokes):
+                stroke_info = combined_strokes[int(stroke_num) - 1]
+                force_curve = stroke_info.get('combined_forceplot', [])
+                if force_curve:
+                    all_force_curves.append(force_curve)
         
         print(f"\n🎉 Generated {len(generated_reports)} comprehensive analyses!")
         print(f"📁 Output directory: {output_dir}")
         
+        # Generate summary table
+        if all_stroke_metrics:
+            self.create_summary_table(analysis_dir, all_stroke_metrics, all_force_curves)
+        
         return generated_reports
+
+    def create_summary_table(self, analysis_dir, all_stroke_metrics, all_force_curves):
+        """Create a summary table showing all strokes with key metrics and average power curve"""
+        print("📊 Creating summary table for all strokes")
+        
+        fig = plt.figure(figsize=(24, 14))
+        gs = fig.add_gridspec(2, 1, height_ratios=[1, 1.2], hspace=0.3)
+        
+        # Top: Average power curve
+        ax_power = fig.add_subplot(gs[0])
+        
+        # Calculate average force curve
+        if all_force_curves:
+            # Normalize all curves to same length (50 points for drive phase only)
+            # Then pad with zeros for recovery phase
+            normalized_curves = []
+            for curve in all_force_curves:
+                if len(curve) > 0:
+                    # Normalize drive phase (0 to 0.5)
+                    x_old = np.linspace(0, 0.5, len(curve))
+                    x_new = np.linspace(0, 0.5, 50)
+                    curve_interp = np.interp(x_new, x_old, curve)
+                    
+                    # Add zeros for recovery phase (0.5 to 1.0)
+                    recovery_zeros = np.zeros(50)
+                    full_curve = np.concatenate([curve_interp, recovery_zeros])
+                    normalized_curves.append(full_curve)
+            
+            if normalized_curves:
+                avg_curve = np.mean(normalized_curves, axis=0)
+                std_curve = np.std(normalized_curves, axis=0)
+                x_axis = np.linspace(0, 1, 100)
+                
+                # Plot average with standard deviation band
+                ax_power.plot(x_axis, avg_curve, 'b-', linewidth=3, label='Average Force')
+                ax_power.fill_between(x_axis, avg_curve - std_curve, avg_curve + std_curve, 
+                                     alpha=0.3, color='blue', label='±1 Std Dev')
+                
+                # Plot individual strokes faintly
+                for i, curve in enumerate(normalized_curves):
+                    ax_power.plot(x_axis, curve, 'gray', linewidth=0.5, alpha=0.3)
+                
+                ax_power.axvline(x=0.5, color='black', linestyle='--', linewidth=1, alpha=0.5)
+                ax_power.set_xlim(0, 1)
+                ax_power.set_ylim(0, max(avg_curve) * 1.1)
+                ax_power.set_xlabel('Stroke Cycle', fontsize=14, fontweight='bold')
+                ax_power.set_ylabel('Normalized Force', fontsize=14, fontweight='bold')
+                ax_power.set_title('Average Force Curve - All Strokes', fontsize=16, fontweight='bold')
+                ax_power.set_xticks([0, 0.5, 1])
+                ax_power.set_xticklabels(['Catch', 'Finish', 'Catch'])
+                ax_power.legend(loc='upper right', fontsize=12)
+                ax_power.grid(True, alpha=0.3)
+        
+        # Bottom: Summary table
+        ax_table = fig.add_subplot(gs[1])
+        ax_table.axis('off')
+        
+        if not all_stroke_metrics:
+            ax_table.text(0.5, 0.5, 'No stroke metrics available', ha='center', va='center', fontsize=16)
+            return
+        
+        # Create table data
+        headers = ['Stroke', 'Catch\nShins°', 'Catch\nBody°', 'Catch\nElbows°', 
+                  'Finish\nLayback°', 'Finish\nLegs°', 'Finish\nHandle%',
+                  'Seq\nL→B%', 'Seq\nB→A%', 'Drive\nRatio%']
+        
+        table_data = []
+        for stroke_num, metrics in sorted(all_stroke_metrics.items()):
+            row = [
+                f"#{stroke_num}",
+                metrics.get('catch_shins', 'N/A'),
+                metrics.get('catch_body', 'N/A'),
+                metrics.get('catch_elbows', 'N/A'),
+                metrics.get('finish_layback', 'N/A'),
+                metrics.get('finish_legs', 'N/A'),
+                metrics.get('finish_handle', 'N/A'),
+                metrics.get('sep_lb', 'N/A'),
+                metrics.get('sep_ba', 'N/A'),
+                metrics.get('drive_ratio', 'N/A')
+            ]
+            table_data.append(row)
+        
+        # Calculate statistics (min, max, avg) for each metric
+        def safe_float(val):
+            try:
+                return float(str(val).replace('°','').replace('%',''))
+            except:
+                return None
+        
+        stats_row_avg = ['AVG']
+        stats_row_min = ['MIN']
+        stats_row_max = ['MAX']
+        
+        for col_idx in range(1, len(headers)):
+            values = [safe_float(row[col_idx]) for row in table_data]
+            values = [v for v in values if v is not None]
+            if values:
+                stats_row_avg.append(f"{np.mean(values):.0f}")
+                stats_row_min.append(f"{np.min(values):.0f}")
+                stats_row_max.append(f"{np.max(values):.0f}")
+            else:
+                stats_row_avg.append('N/A')
+                stats_row_min.append('N/A')
+                stats_row_max.append('N/A')
+        
+        # Add stats rows
+        table_data.append(['---'] * len(headers))
+        table_data.append(stats_row_avg)
+        table_data.append(stats_row_min)
+        table_data.append(stats_row_max)
+        
+        # Create matplotlib table
+        table = ax_table.table(cellText=table_data, colLabels=headers,
+                              cellLoc='center', loc='center',
+                              bbox=[0.05, 0.1, 0.9, 0.85])
+        
+        table.auto_set_font_size(False)
+        table.set_fontsize(11)
+        table.scale(1, 2.5)
+        
+        # Style the table
+        for i in range(len(headers)):
+            table[(0, i)].set_facecolor('#4CAF50')
+            table[(0, i)].set_text_props(weight='bold', color='white')
+        
+        # Color code cells based on ideal ranges
+        ideal_ranges = {
+            1: (-8, 6),      # Shins
+            2: (13, 39),     # Body forward
+            3: (160, 200),   # Elbows (min threshold)
+            4: (-48, -32),   # Layback
+            5: (164, 200),   # Legs (min threshold)
+            6: (40, 80),     # Handle
+            7: (75, 100),    # L→B (min threshold)
+            8: (30, 100),    # B→A (min threshold)
+            9: (30, 50)      # Drive ratio
+        }
+        
+        for row_idx in range(1, len(table_data) - 3):  # Exclude stats rows
+            for col_idx in range(1, len(headers)):
+                cell = table[(row_idx + 1, col_idx)]
+                val = safe_float(table_data[row_idx][col_idx])
+                
+                if val is not None and col_idx in ideal_ranges:
+                    low, high = ideal_ranges[col_idx]
+                    # Check if it's a min threshold metric
+                    is_min_threshold = col_idx in [3, 5, 7, 8]
+                    
+                    if is_min_threshold:
+                        in_range = val >= low
+                    else:
+                        in_range = low <= val <= high
+                    
+                    if in_range:
+                        cell.set_facecolor('#C8E6C9')  # Light green
+                    else:
+                        cell.set_facecolor('#FFE0B2')  # Light orange
+        
+        # Style stats rows (account for header row offset)
+        num_data_rows = len(table_data)
+        for col_idx in range(len(headers)):
+            table[(num_data_rows - 3, col_idx)].set_facecolor('#E0E0E0')  # Separator
+            table[(num_data_rows - 2, col_idx)].set_facecolor('#BBDEFB')  # AVG
+            table[(num_data_rows - 2, col_idx)].set_text_props(weight='bold')
+            table[(num_data_rows - 1, col_idx)].set_facecolor('#F5F5F5')  # MIN
+            table[(num_data_rows, col_idx)].set_facecolor('#F5F5F5')  # MAX
+        
+        fig.suptitle('Rowing Session Summary - All Strokes', fontsize=20, fontweight='bold', y=0.98)
+        
+        output_path = os.path.join(analysis_dir, "session_summary.png")
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"   📊 Created session summary: {os.path.basename(output_path)}")
+        return output_path
 
 def main():
     """Main function"""
