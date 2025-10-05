@@ -343,6 +343,171 @@ def create_3d_stroke_animation(data, stroke_number, output_path):
     
     return output_path
 
+def create_combined_stroke_analysis(analysis_dir):
+    """Create a combined 3D visualization showing all strokes"""
+    print("🎬 Creating Combined Stroke Analysis")
+    print("=" * 50)
+    
+    data = load_stroke_data(analysis_dir)
+    if not data:
+        return
+    
+    pose_frames = data['pose_frames']
+    frame_timestamps = data['frame_timestamps']
+    combined_strokes = data['combined_strokes']
+    
+    if not combined_strokes:
+        print("❌ No stroke data found")
+        return
+    
+    print(f"📊 Processing {len(combined_strokes)} strokes...")
+    
+    # Collect all stroke data
+    all_stroke_data = []
+    all_leg_angles = []
+    all_back_angles = []
+    all_arm_angles = []
+    all_forces = []
+    
+    for stroke_idx, stroke in enumerate(combined_strokes):
+        stroke_data = []
+        
+        # Get frames for this stroke
+        for i, ft in enumerate(frame_timestamps):
+            if stroke['start_timestamp'] <= ft['timestamp'] <= stroke['end_timestamp']:
+                if i < len(pose_frames):
+                    frame = pose_frames[i]
+                    
+                    # Calculate average angles
+                    leg_angle = np.mean([v for v in [frame.get('left_leg_angle'), frame.get('right_leg_angle')] if v is not None])
+                    back_angle = frame.get('back_vertical_angle')
+                    arm_angle = np.mean([v for v in [frame.get('left_arm_angle'), frame.get('right_arm_angle')] if v is not None])
+                    
+                    if not np.isnan(leg_angle) and back_angle is not None and not np.isnan(arm_angle):
+                        stroke_data.append({
+                            'time': (ft['timestamp'] - stroke['start_timestamp']).total_seconds(),
+                            'leg_angle': leg_angle,
+                            'back_angle': back_angle,
+                            'arm_angle': arm_angle,
+                            'frame_idx': ft['frame_idx'],
+                            'stroke_number': stroke_idx + 1
+                        })
+        
+        if len(stroke_data) > 0:
+            # Map force data to frames
+            force_curve = stroke['combined_forceplot']
+            if force_curve:
+                max_force = max(force_curve)
+                for i, frame_data in enumerate(stroke_data):
+                    time_ratio = frame_data['time'] / stroke_data[-1]['time']
+                    force_idx = int(time_ratio * (len(force_curve) - 1))
+                    force_idx = min(force_idx, len(force_curve) - 1)
+                    frame_data['force'] = force_curve[force_idx] / max_force if max_force > 0 else 0
+            else:
+                for frame_data in stroke_data:
+                    frame_data['force'] = 0
+            
+            all_stroke_data.append(stroke_data)
+            
+            # Collect for global ranges
+            leg_angles = [d['leg_angle'] for d in stroke_data]
+            back_angles = [d['back_angle'] for d in stroke_data]
+            arm_angles = [d['arm_angle'] for d in stroke_data]
+            forces = [d['force'] for d in stroke_data]
+            
+            all_leg_angles.extend(leg_angles)
+            all_back_angles.extend(back_angles)
+            all_arm_angles.extend(arm_angles)
+            all_forces.extend(forces)
+    
+    if not all_stroke_data:
+        print("❌ No valid stroke data found")
+        return
+    
+    # Calculate global ranges
+    leg_min, leg_max = min(all_leg_angles), max(all_leg_angles)
+    back_min, back_max = min(all_back_angles), max(all_back_angles)
+    arm_min, arm_max = min(all_arm_angles), max(all_arm_angles)
+    
+    leg_range = [leg_min - 10, leg_max + 10]
+    back_range = [back_min - 10, back_max + 10]
+    arm_range = [arm_min - 10, arm_max + 10]
+    
+    # Create traces for each stroke
+    traces = []
+    colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+    
+    for stroke_idx, stroke_data in enumerate(all_stroke_data):
+        leg_angles = [d['leg_angle'] for d in stroke_data]
+        back_angles = [d['back_angle'] for d in stroke_data]
+        arm_angles = [d['arm_angle'] for d in stroke_data]
+        forces = [d['force'] for d in stroke_data]
+        
+        color = colors[stroke_idx % len(colors)]
+        
+        # Create stroke trace
+        trace = go.Scatter3d(
+            x=leg_angles,
+            y=back_angles,
+            z=arm_angles,
+            mode='lines+markers',
+            marker=dict(
+                size=4,
+                color=forces,
+                colorscale='Viridis',
+                cmin=0,
+                cmax=1,
+                showscale=False,
+                line=dict(color=color, width=1)
+            ),
+            line=dict(
+                color=color,
+                width=3
+            ),
+            name=f'Stroke {stroke_idx + 1}',
+            hovertemplate=f'<b>Stroke {stroke_idx + 1}</b><br>' +
+                         'Leg: %{x:.1f}°<br>' +
+                         'Back: %{y:.1f}°<br>' +
+                         'Arm: %{z:.1f}°<br>' +
+                         'Force: %{marker.color:.2f}<br>' +
+                         '<extra></extra>'
+        )
+        traces.append(trace)
+    
+    # Create the figure
+    fig = go.Figure(
+        data=traces,
+        layout=go.Layout(
+            title=f"Combined Stroke Analysis - All {len(all_stroke_data)} Strokes",
+            scene=dict(
+                xaxis=dict(title="Leg Angle (°)", range=leg_range, autorange=False),
+                yaxis=dict(title="Back Angle (°)", range=back_range, autorange=False),
+                zaxis=dict(title="Arm Angle (°)", range=arm_range, autorange=False),
+                camera=dict(
+                    eye=dict(x=1.5, y=1.5, z=1.2),
+                    center=dict(x=0, y=0, z=0),
+                    up=dict(x=0, y=0, z=1)
+                ),
+                aspectmode='cube'
+            ),
+            height=800,
+            width=1200,
+            showlegend=True
+        )
+    )
+    
+    # Save to HTML
+    output_dir = os.path.join(analysis_dir, "3d_animations")
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "combined_stroke_analysis.html")
+    fig.write_html(output_path)
+    
+    print(f"   ✅ Saved combined analysis: {os.path.basename(output_path)}")
+    print(f"📁 Output directory: {output_dir}")
+    print(f"\n💡 Open the HTML file in your browser to view the interactive combined analysis")
+    
+    return output_path
+
 def create_all_stroke_animations(analysis_dir):
     """Create 3D animations for all strokes"""
     print("🎬 Creating 3D Stroke Animations")
@@ -377,6 +542,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate 3D animated stroke visualizations")
     parser.add_argument("analysis_dir", help="Analysis directory path containing the data")
     parser.add_argument("--stroke", type=int, help="Generate animation for specific stroke number only")
+    parser.add_argument("--combined", action="store_true", help="Generate combined analysis showing all strokes")
     
     args = parser.parse_args()
     
@@ -385,7 +551,10 @@ def main():
         print(f"❌ Analysis directory not found: {args.analysis_dir}")
         return
     
-    if args.stroke:
+    if args.combined:
+        # Generate combined analysis
+        create_combined_stroke_analysis(args.analysis_dir)
+    elif args.stroke:
         # Generate single stroke animation
         data = load_stroke_data(args.analysis_dir)
         if data:
