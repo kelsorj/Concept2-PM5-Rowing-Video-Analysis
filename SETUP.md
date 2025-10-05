@@ -425,6 +425,51 @@ analysis_py3rowcap_20251004_123520/
 
 Perfect for coaching and technique analysis! 🚣‍♂️
 
+## 📊 Comprehensive Stroke Analysis
+
+For the most detailed analysis, use the `comprehensive_stroke_analysis.py` script that combines video frames with the "Speed & Sequence" plot.
+
+### What It Does
+
+The comprehensive analysis creates a single visualization that includes:
+- **6 key video frames** from each stroke (top section)
+- **Speed & Sequence plot** showing drive and recovery phases (bottom section)
+- **Legs, Back, Arms, and Handle** contribution curves
+- **Phase labels** and separation percentages
+- **Peak timing analysis** for optimal stroke sequencing
+
+### Usage
+
+```bash
+# Generate comprehensive analyses for all strokes
+python comprehensive_stroke_analysis.py analysis_py3rowcap_20251004_123520
+```
+
+### Output
+
+The script creates a `comprehensive_analyses` folder inside your analysis directory:
+```
+analysis_py3rowcap_20251004_123520/
+├── comprehensive_analyses/
+│   ├── stroke_01_comprehensive_analysis.png
+│   ├── stroke_02_comprehensive_analysis.png
+│   └── ...
+├── rowing_analysis_data_*.csv
+├── pose_data_*.json
+└── complete_kinematics_overlay_*.mp4
+```
+
+### Speed & Sequence Plot Features
+
+The bottom section shows the ideal rowing sequence:
+- **Drive Phase**: Legs → Back → Arms (left side)
+- **Recovery Phase**: Arms → Back → Legs (right side)
+- **Colored lines**: Green (Legs), Blue (Back), Magenta (Arms), Black dotted (Handle)
+- **Peak labels**: L, B, A markers show timing of maximum contribution
+- **Separation percentages**: Quantify how well movements are sequenced
+
+This provides the most complete analysis for coaching and technique improvement! 🚣‍♂️
+
 ## Final Support
 
 For issues or questions:
