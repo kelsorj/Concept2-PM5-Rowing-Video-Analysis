@@ -770,10 +770,9 @@ class ComprehensiveStrokeAnalysis:
             # Determine drive direction from overall movement pattern
             all_hip_x_array = np.array(all_hip_x)
             global_range = np.max(all_hip_x_array) - np.min(all_hip_x_array)
-            drive_direction = 'left' if all_hip_x[0] > all_hip_x[-1] else 'right'
             
-            # Get frames in an expanded window around this stroke (±0.5s)
-            stroke_start_expanded = stroke['start_timestamp_dt'] - pd.Timedelta(seconds=0.5)
+            # Get frames in an expanded window around this stroke (same as frame extraction)
+            stroke_start_expanded = stroke['start_timestamp_dt'] - pd.Timedelta(seconds=0.7)
             stroke_end_expanded = stroke['end_timestamp_dt'] + pd.Timedelta(seconds=0.3)
             
             window_frames = []
@@ -795,6 +794,9 @@ class ComprehensiveStrokeAnalysis:
                 finish_pose = window_frames[len(window_frames)//2]['frame'] if len(window_frames) > 1 else {}
             else:
                 window_hip_x_array = np.array(window_hip_x)
+                
+                # Determine direction from the window itself
+                drive_direction = 'left' if window_hip_x[0] > window_hip_x[-1] else 'right'
                 
                 # Find local extrema using scipy
                 from scipy.signal import argrelextrema
