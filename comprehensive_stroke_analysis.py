@@ -913,11 +913,12 @@ class ComprehensiveStrokeAnalysis:
         if len(frames) == 0:
             return
         
-        # Create figure with subplots (adjusted for 4 frames)
-        fig = plt.figure(figsize=(20, 15))
+        # Create figure with subplots (2x2 grid for 4 frames)
+        fig = plt.figure(figsize=(20, 18))
         
-        # Create grid layout (4 columns for 4 phases)
-        gs = fig.add_gridspec(4, 4, height_ratios=[2, 2, 1.0, 2.0], width_ratios=[1, 1, 1, 1])
+        # Create grid layout: 2 rows of frames, then sequence plot, then metrics
+        # Rows: [Frame top-left, Frame top-right], [Frame bottom-left, Frame bottom-right], [Sequence], [Metrics]
+        gs = fig.add_gridspec(4, 2, height_ratios=[2, 2, 1.0, 2.0], width_ratios=[1, 1])
         
         # Add main title
         fig.suptitle(f'Stroke #{stroke_number} - Comprehensive Analysis', fontsize=20, fontweight='bold')
@@ -925,11 +926,15 @@ class ComprehensiveStrokeAnalysis:
         # Phase labels (classical 4 phases)
         phase_labels = ["Catch", "Drive", "Finish", "Recovery"]
         
-        # Create video frame subplots (top 2 rows)
+        # Frame positions in 2x2 grid: [(row, col), ...]
+        frame_positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
+        
+        # Create video frame subplots (2x2 grid)
         frame_axes = []
         for i in range(4):
             if i < len(frames):
-                ax = fig.add_subplot(gs[0:2, i])
+                row, col = frame_positions[i]
+                ax = fig.add_subplot(gs[row, col])
                 frame_axes.append(ax)
                 
                 # Convert BGR to RGB for matplotlib
@@ -939,7 +944,7 @@ class ComprehensiveStrokeAnalysis:
                 
                 # Add title with phase label
                 phase_label = phase_labels[i] if i < len(phase_labels) else f"Phase {i+1}"
-                ax.set_title(f'{phase_label}\n(Frame #{frames[i]["frame_number"]})', fontsize=12, fontweight='bold')
+                ax.set_title(f'{phase_label}\n(Frame #{frames[i]["frame_number"]})', fontsize=14, fontweight='bold')
                 ax.axis('off')
                 
                 # Add angle measurements as text overlay
@@ -953,15 +958,16 @@ class ComprehensiveStrokeAnalysis:
                 
                 if angle_text:
                     ax.text(0.02, 0.98, angle_text.strip(), transform=ax.transAxes, 
-                           fontsize=8, verticalalignment='top', 
+                           fontsize=9, verticalalignment='top', 
                            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
             else:
                 # Empty subplot for missing frames
-                ax = fig.add_subplot(gs[0:2, i])
+                row, col = frame_positions[i]
+                ax = fig.add_subplot(gs[row, col])
                 ax.axis('off')
                 frame_axes.append(ax)
         
-        # Create sequence plot (row 3, spans all columns)
+        # Create sequence plot (row 3, spans both columns)
         ax_sequence = fig.add_subplot(gs[2, :])
         self.create_sequence_plot(ax_sequence, sequence_data, stroke_number)
 
