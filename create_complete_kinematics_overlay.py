@@ -868,6 +868,99 @@ def generate_comprehensive_report(pose_data, combined_strokes, frame_timestamps,
         f.write(f"Total Strokes: {len(combined_strokes)}\n")
         f.write(f"Analysis Duration: {frame_timestamps[-1]['timestamp_dt'] - frame_timestamps[0]['timestamp_dt']}\n\n")
         
+        # Helper utilities for metrics
+        def find_nearest_frame_idx(target_dt):
+            nearest_idx = 0
+            min_diff = float('inf')
+            for i, ts in enumerate(frame_timestamps):
+                diff = abs((ts['timestamp_dt'] - target_dt).total_seconds())
+                if diff < min_diff:
+                    min_diff = diff
+                    nearest_idx = i
+            return nearest_idx
+
+        def get_mean(values):
+            vals = [v for v in values if v is not None]
+            return float(np.mean(vals)) if vals else None
+
+        def handle_height_percent(pose_frame):
+            # Percent of wrist height between hip(0%) and shoulder(100%)
+            keys = ['left_shoulder', 'right_shoulder', 'left_hip', 'right_hip', 'left_wrist', 'right_wrist']
+            vals = {}
+            for k in keys:
+                y_key = f"{k}_y"; c_key = f"{k}_confidence"
+                if y_key in pose_frame and c_key in pose_frame and pose_frame[c_key] > 0.5:
+                    vals[k] = pose_frame[y_key]
+            if not all(x in vals for x in ['left_shoulder','right_shoulder','left_hip','right_hip']) or not any(x in vals for x in ['left_wrist','right_wrist']):
+                return None
+            shoulder_y = np.mean([vals['left_shoulder'], vals['right_shoulder']])
+            hip_y = np.mean([vals['left_hip'], vals['right_hip']])
+            wrist_y = np.mean([v for k,v in vals.items() if 'wrist' in k])
+            denom = (hip_y - shoulder_y)
+            if denom <= 1e-3:
+                return None
+            pct = (hip_y - wrist_y) / denom * 100.0
+            return float(np.clip(pct, 0.0, 100.0))
+
+        def compute_sequence_metrics(stroke):
+            # Derive drive timing from measurements
+            drive_start = None
+            drive_end = None
+            for m in stroke.get('measurements', []):
+                if m.get('strokestate') == 'Drive' and drive_start is None:
+                    drive_start = m.get('timestamp_dt')
+                if m.get('strokestate') in ['Drive','Dwelling']:
+                    drive_end = m.get('timestamp_dt')
+            if drive_start is None:
+                drive_start = stroke['start_timestamp_dt']
+            if drive_end is None:
+                drive_end = stroke.get('end_timestamp_dt', stroke['start_timestamp_dt'])
+
+            # Frames within drive
+            drive_frames = []
+            for j, ts in enumerate(frame_timestamps):
+                if drive_start <= ts['timestamp_dt'] <= drive_end and j < len(pose_data):
+                    drive_frames.append((ts['timestamp_dt'], pose_data[j]))
+
+            # Compute gradients for legs, back, arms
+            def grad_peak_time(series_times, series_vals, prefer_positive=True):
+                vals = np.array(series_vals, dtype=float)
+                times = np.array([t.timestamp() for t,_ in zip(series_times, series_vals)])
+                if len(vals) < 3 or np.all(np.isnan(vals)):
+                    return None
+                # Fill NaNs by interpolation
+                valid = ~np.isnan(vals)
+                if np.any(valid):
+                    vals = np.interp(np.arange(len(vals)), np.where(valid)[0], vals[valid])
+                dt = np.gradient(times) if len(times) > 1 else np.ones_like(vals)
+                grad = np.gradient(vals) / np.maximum(dt, 1e-6)
+                idx = int(np.nanargmax(grad) if prefer_positive else np.nanargmin(grad))
+                return series_times[idx]
+
+            if drive_frames:
+                ts_list = [t for t,_ in drive_frames]
+                legs_series = [get_mean([fr.get('left_leg_angle'), fr.get('right_leg_angle')]) for _, fr in drive_frames]
+                back_series = [fr.get('back_vertical_angle') for _, fr in drive_frames]
+                arms_series = [get_mean([fr.get('left_arm_angle'), fr.get('right_arm_angle')]) for _, fr in drive_frames]
+
+                legs_peak_t = grad_peak_time(ts_list, legs_series, prefer_positive=True)
+                back_peak_t = grad_peak_time(ts_list, back_series, prefer_positive=True)
+                # Arms during drive: elbows close at finish -> angle decreasing, so negative gradient peak
+                arms_peak_t = grad_peak_time(ts_list, arms_series, prefer_positive=False)
+
+                drive_dur = (drive_end - drive_start).total_seconds() if (drive_end and drive_start) else None
+                stroke_dur = stroke.get('stroke_duration')
+
+                sep_lb = None; sep_ba = None; drive_ratio = None
+                if legs_peak_t and back_peak_t and drive_dur and drive_dur > 0:
+                    sep_lb = float(np.clip(((back_peak_t - legs_peak_t).total_seconds() / drive_dur) * 100.0, 0.0, 100.0))
+                if back_peak_t and arms_peak_t and drive_dur and drive_dur > 0:
+                    sep_ba = float(np.clip(((arms_peak_t - back_peak_t).total_seconds() / drive_dur) * 100.0, 0.0, 100.0))
+                if stroke_dur and stroke_dur > 0 and drive_dur:
+                    drive_ratio = float(np.clip(drive_dur / stroke_dur * 100.0, 0.0, 100.0))
+                return sep_lb, sep_ba, drive_ratio
+            return None, None, None
+
         # Stroke summary
         f.write("STROKE SUMMARY\n")
         f.write("-" * 20 + "\n")
@@ -879,6 +972,56 @@ def generate_comprehensive_report(pose_data, combined_strokes, frame_timestamps,
             f.write(f"  Stroke Rate: {stroke['final_spm']} spm\n")
             f.write(f"  Time: {stroke['start_timestamp_dt'].strftime('%H:%M:%S.%f')[:-3]} - {stroke['end_timestamp_dt'].strftime('%H:%M:%S.%f')[:-3]}\n")
             f.write(f"  Phases: {' -> '.join(stroke['stroke_phases'])}\n\n")
+
+        # Coaching metrics per stroke (Finish, Catch, Sequence)
+        f.write("COACHING METRICS (per stroke)\n")
+        f.write("-" * 30 + "\n")
+        for i, stroke in enumerate(combined_strokes):
+            f.write(f"Stroke {i+1}:\n")
+            # Catch/Finish timestamps
+            first_drive = None
+            last_drive = None
+            for m in stroke.get('measurements', []):
+                if m.get('strokestate') == 'Drive' and first_drive is None:
+                    first_drive = m.get('timestamp_dt')
+                if m.get('strokestate') in ['Drive','Dwelling']:
+                    last_drive = m.get('timestamp_dt')
+            catch_dt = first_drive or stroke['start_timestamp_dt']
+            finish_dt = last_drive or stroke['end_timestamp_dt']
+
+            catch_idx = find_nearest_frame_idx(catch_dt)
+            finish_idx = find_nearest_frame_idx(finish_dt)
+            catch_pose = pose_data[catch_idx] if catch_idx < len(pose_data) else {}
+            finish_pose = pose_data[finish_idx] if finish_idx < len(pose_data) else {}
+
+            # Finish metrics
+            layback = finish_pose.get('back_vertical_angle')
+            legs_unbent = get_mean([finish_pose.get('left_leg_angle'), finish_pose.get('right_leg_angle')])
+            handle_pct = handle_height_percent(finish_pose)
+
+            # Catch metrics
+            shins_angle = get_mean([catch_pose.get('left_ankle_vertical_angle'), catch_pose.get('right_ankle_vertical_angle')])
+            fwd_body = catch_pose.get('back_vertical_angle')
+            elbows_unbent = get_mean([catch_pose.get('left_arm_angle'), catch_pose.get('right_arm_angle')])
+
+            # Sequence metrics
+            sep_lb, sep_ba, drive_ratio = compute_sequence_metrics(stroke)
+
+            def fmt(v, suffix=''):
+                return f"{v:.0f}{suffix}" if isinstance(v, (int,float)) and v is not None else "N/A"
+
+            f.write(f"  Finish:\n")
+            f.write(f"    Layback body angle: {fmt(layback, '°')}\n")
+            f.write(f"    Legs unbent: {fmt(legs_unbent, '°')}\n")
+            f.write(f"    Handle height at torso: {fmt(handle_pct, '%')}\n")
+            f.write(f"  Catch:\n")
+            f.write(f"    Shins angle: {fmt(shins_angle, '°')}\n")
+            f.write(f"    Forward body angle: {fmt(fwd_body, '°')}\n")
+            f.write(f"    Elbows unbent: {fmt(elbows_unbent, '°')}\n")
+            f.write(f"  Sequence:\n")
+            f.write(f"    Drive Legs&Back separation: {fmt(sep_lb, '%')}\n")
+            f.write(f"    Drive Back&Arms separation: {fmt(sep_ba, '%')}\n")
+            f.write(f"    Drive duration ratio: {fmt(drive_ratio, '%')}\n\n")
         
         # Body angle statistics
         f.write("BODY ANGLE STATISTICS\n")

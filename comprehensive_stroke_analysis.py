@@ -77,10 +77,13 @@ class ComprehensiveStrokeAnalysis:
             original_name = analysis_name[9:]  # Remove 'analysis_' prefix
             original_dir = os.path.join(os.getcwd(), original_name)
             raw_csv_files = glob.glob(os.path.join(original_dir, "*_raw.csv"))
+            frames_csv_files = glob.glob(os.path.join(original_dir, "*_frames.csv"))
         
         # Also check in the analysis directory itself
         if not raw_csv_files:
             raw_csv_files = glob.glob(os.path.join(analysis_dir, "*_raw.csv"))
+        if not 'frames_csv_files' in locals() or not frames_csv_files:
+            frames_csv_files = glob.glob(os.path.join(analysis_dir, "*_frames.csv"))
         
         # Prefer combined JSON if present (highest fidelity, saved by overlay pipeline)
         combined_strokes = None
@@ -128,12 +131,44 @@ class ComprehensiveStrokeAnalysis:
                 combined_strokes = self.load_and_combine_force_data(raw_csv_files[0])
             else:
                 print("⚠️  No force data found - will use theoretical curves")
+
+        # Try to load pose JSON frames to support extra metrics (e.g., handle height)
+        pose_json_files = sorted(glob.glob(os.path.join(analysis_dir, "pose_data_*.json")))
+        pose_frames = None
+        if pose_json_files:
+            try:
+                with open(pose_json_files[-1], 'r') as pf:
+                    pose_frames = json.load(pf)
+                print(f"📊 Loaded pose frames JSON: {os.path.basename(pose_json_files[-1])}")
+            except Exception as e:
+                print(f"⚠️  Failed to load pose frames JSON: {e}")
         
+        # Load frame timestamps if available (for metrics alignment)
+        frame_timestamps = None
+        if frames_csv_files:
+            try:
+                frame_timestamps = []
+                with open(frames_csv_files[0], 'r') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        try:
+                            frame_timestamps.append({
+                                'frame_idx': int(row.get('frame_idx') or row.get('frame_number') or 0),
+                                'timestamp_dt': datetime.fromisoformat(row['ts_iso'])
+                            })
+                        except Exception:
+                            continue
+                print(f"📊 Loaded {len(frame_timestamps)} frame timestamps for alignment")
+            except Exception as e:
+                print(f"⚠️  Failed to load frame timestamps CSV: {e}")
+
         return {
             'dataframe': df,
             'video_path': video_path,
             'directory': analysis_dir,
-            'combined_strokes': combined_strokes
+            'combined_strokes': combined_strokes,
+            'pose_frames': pose_frames,
+            'frame_timestamps': frame_timestamps
         }
     
     def load_and_combine_force_data(self, raw_csv_path):
@@ -524,6 +559,137 @@ class ComprehensiveStrokeAnalysis:
         
         return contribution
     
+    def compute_coaching_metrics_for_stroke(self, stroke_number, data):
+        """Compute compact coaching metrics for the metrics table.
+        Requires pose frames loaded in data['pose_frames'] and combined strokes.
+        """
+        pose_frames = data.get('pose_frames')
+        frame_ts = data.get('frame_timestamps')
+        combined_strokes = data.get('combined_strokes')
+        if not pose_frames or not frame_ts or not combined_strokes or stroke_number > len(combined_strokes):
+            return None
+
+        stroke = combined_strokes[stroke_number - 1]
+
+        # Map pose frames to actual timestamps using frame_timestamps CSV (1:1 ordered mapping)
+        mapped_frames = []
+        limit = min(len(pose_frames), len(frame_ts))
+        for i in range(limit):
+            mapped_frames.append({'ts': frame_ts[i]['timestamp_dt'], 'frame': pose_frames[i]})
+
+        # Helpers
+        def find_nearest_frame(target_dt):
+            best = None
+            best_diff = float('inf')
+            for item in mapped_frames:
+                diff = abs((item['ts'] - target_dt).total_seconds())
+                if diff < best_diff:
+                    best_diff = diff
+                    best = item['frame']
+            return best
+
+        def mean_or_none(values):
+            vals = [v for v in values if v is not None]
+            return float(np.mean(vals)) if vals else None
+
+        def handle_height_percent(pose_frame):
+            keys = ['left_shoulder', 'right_shoulder', 'left_hip', 'right_hip', 'left_wrist', 'right_wrist']
+            d = {}
+            for k in keys:
+                y_key = f"{k}_y"; c_key = f"{k}_confidence"
+                if y_key in pose_frame and c_key in pose_frame and pose_frame[c_key] and pose_frame[c_key] > 0.5:
+                    d[k] = pose_frame[y_key]
+            if not all(x in d for x in ['left_shoulder','right_shoulder','left_hip','right_hip']) or not any('wrist' in k for k in d.keys()):
+                return None
+            shoulder_y = np.mean([d['left_shoulder'], d['right_shoulder']])
+            hip_y = np.mean([d['left_hip'], d['right_hip']])
+            wrist_vals = [v for k,v in d.items() if 'wrist' in k]
+            wrist_y = np.mean(wrist_vals)
+            denom = (hip_y - shoulder_y)
+            if denom <= 1e-3:
+                return None
+            pct = (hip_y - wrist_y) / denom * 100.0
+            return float(np.clip(pct, 0.0, 100.0))
+
+        # Determine catch and finish timestamps from PM5 phases
+        first_drive = None
+        last_drive = None
+        for m in stroke.get('measurements', []):
+            if m.get('strokestate') == 'Drive' and first_drive is None:
+                first_drive = m.get('timestamp_dt')
+            if m.get('strokestate') in ['Drive', 'Dwelling']:
+                last_drive = m.get('timestamp_dt')
+        catch_dt = first_drive or stroke['start_timestamp_dt']
+        finish_dt = last_drive or stroke['end_timestamp_dt']
+
+        catch_pose = find_nearest_frame(catch_dt) or {}
+        finish_pose = find_nearest_frame(finish_dt) or {}
+
+        layback = finish_pose.get('back_vertical_angle')
+        legs_unbent = mean_or_none([finish_pose.get('left_leg_angle'), finish_pose.get('right_leg_angle')])
+        handle_pct = handle_height_percent(finish_pose)
+
+        shins_angle = mean_or_none([catch_pose.get('left_ankle_vertical_angle'), catch_pose.get('right_ankle_vertical_angle')])
+        fwd_body = catch_pose.get('back_vertical_angle')
+        elbows_unbent = mean_or_none([catch_pose.get('left_arm_angle'), catch_pose.get('right_arm_angle')])
+
+        # Sequence metrics based on angle gradients across drive
+        # Collect frames within drive
+        drive_start = first_drive or stroke['start_timestamp_dt']
+        drive_end = last_drive or stroke.get('end_timestamp_dt', drive_start)
+        ts_list = []
+        legs_series = []
+        back_series = []
+        arms_series = []
+        for item in mapped_frames:
+            ts = item['ts']
+            fr = item['frame']
+            if drive_start <= ts <= drive_end:
+                ts_list.append(ts)
+                legs_series.append(mean_or_none([fr.get('left_leg_angle'), fr.get('right_leg_angle')]))
+                back_series.append(fr.get('back_vertical_angle'))
+                arms_series.append(mean_or_none([fr.get('left_arm_angle'), fr.get('right_arm_angle')]))
+
+        def grad_peak_time(times, vals, prefer_positive=True):
+            if len(times) < 3:
+                return None
+            arr = np.array(vals, dtype=float)
+            # Interpolate NaNs
+            mask = ~np.isnan(arr)
+            if np.any(mask):
+                arr = np.interp(np.arange(len(arr)), np.where(mask)[0], arr[mask])
+            seconds = np.array([t.timestamp() for t in times])
+            if len(seconds) < 2:
+                return None
+            dt = np.gradient(seconds)
+            grad = np.gradient(arr) / np.maximum(dt, 1e-6)
+            idx = int(np.argmax(grad) if prefer_positive else np.argmin(grad))
+            return times[idx]
+
+        legs_peak_t = grad_peak_time(ts_list, legs_series, prefer_positive=True)
+        back_peak_t = grad_peak_time(ts_list, back_series, prefer_positive=True)
+        arms_peak_t = grad_peak_time(ts_list, arms_series, prefer_positive=False)
+
+        drive_dur = (drive_end - drive_start).total_seconds() if (drive_end and drive_start) else None
+        sep_lb = float(np.clip(((back_peak_t - legs_peak_t).total_seconds() / drive_dur) * 100.0, 0.0, 100.0)) if (drive_dur and legs_peak_t and back_peak_t) else None
+        sep_ba = float(np.clip(((arms_peak_t - back_peak_t).total_seconds() / drive_dur) * 100.0, 0.0, 100.0)) if (drive_dur and back_peak_t and arms_peak_t) else None
+        stroke_dur = stroke.get('stroke_duration')
+        drive_ratio = float(np.clip(drive_dur / stroke_dur * 100.0, 0.0, 100.0)) if (stroke_dur and drive_dur) else None
+
+        def fmt(v):
+            return f"{v:.0f}" if isinstance(v, (int,float)) and v is not None else "N/A"
+
+        return {
+            'finish_layback': fmt(layback),
+            'finish_legs': fmt(legs_unbent),
+            'finish_handle': fmt(handle_pct),
+            'catch_shins': fmt(shins_angle),
+            'catch_body': fmt(fwd_body),
+            'catch_elbows': fmt(elbows_unbent),
+            'sep_lb': fmt(sep_lb),
+            'sep_ba': fmt(sep_ba),
+            'drive_ratio': fmt(drive_ratio)
+        }
     def create_comprehensive_stroke_analysis(self, frames, sequence_data, stroke_number, output_path):
         """Create comprehensive analysis with video frames and sequence plot"""
         if len(frames) == 0:
@@ -533,7 +699,7 @@ class ComprehensiveStrokeAnalysis:
         fig = plt.figure(figsize=(20, 12))
         
         # Create grid layout
-        gs = fig.add_gridspec(3, 6, height_ratios=[2, 2, 1], width_ratios=[1, 1, 1, 1, 1, 1])
+        gs = fig.add_gridspec(4, 6, height_ratios=[2, 2, 1.2, 0.8], width_ratios=[1, 1, 1, 1, 1, 1])
         
         # Add main title
         fig.suptitle(f'Stroke #{stroke_number} - Comprehensive Analysis', fontsize=20, fontweight='bold')
@@ -577,9 +743,25 @@ class ComprehensiveStrokeAnalysis:
                 ax.axis('off')
                 frame_axes.append(ax)
         
-        # Create sequence plot (bottom row, spans all columns)
+        # Create sequence plot (row 3, spans all columns)
         ax_sequence = fig.add_subplot(gs[2, :])
         self.create_sequence_plot(ax_sequence, sequence_data, stroke_number)
+
+        # Create compact metrics table (bottom row)
+        ax_table = fig.add_subplot(gs[3, :])
+        ax_table.axis('off')
+        metrics = sequence_data.get('coaching_metrics')
+        if metrics:
+            table_data = [
+                ["Finish", f"Layback: {metrics['finish_layback']}°", f"Legs: {metrics['finish_legs']}°", f"Handle: {metrics['finish_handle']}%"],
+                ["Catch", f"Shins: {metrics['catch_shins']}°", f"Body: {metrics['catch_body']}°", f"Elbows: {metrics['catch_elbows']}°"],
+                ["Sequence", f"Legs→Back: {metrics['sep_lb']}%", f"Back→Arms: {metrics['sep_ba']}%", f"Drive: {metrics['drive_ratio']}%"],
+            ]
+            col_labels = ["Section", "Metric 1", "Metric 2", "Metric 3"]
+            table = ax_table.table(cellText=table_data, colLabels=col_labels, loc='center')
+            table.auto_set_font_size(False)
+            table.set_fontsize(10)
+            table.scale(1, 1.4)
         
         plt.tight_layout()
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -685,6 +867,11 @@ class ComprehensiveStrokeAnalysis:
         stroke_data = data['dataframe'][data['dataframe']['stroke_number'] == stroke_number]
         if len(stroke_data) > 0:
             sequence_data = self.calculate_stroke_sequence_data({'data': stroke_data}, stroke_number, data.get('combined_strokes'))
+
+            # Attach coaching metrics from pose frames if available
+            metrics = self.compute_coaching_metrics_for_stroke(stroke_number, data)
+            if metrics:
+                sequence_data['coaching_metrics'] = metrics
             
             # Create comprehensive analysis
             comprehensive_path = os.path.join(output_dir, f"stroke_{stroke_number:02d}_comprehensive_analysis.png")
