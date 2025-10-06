@@ -7,3 +7,4 @@ __pycache__/*
 py3rowcap*
 analysis_py3rowcap_*
 py3rowcap_20251005_163446/py3rowcap_20251005_163446_frames.csv
+.vscode*
