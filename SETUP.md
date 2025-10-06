@@ -351,8 +351,8 @@ rowingIA/
 
 1. **Install dependencies**: `pip install -r requirements.txt`
 2. **Connect PM5** via USB and start a workout
-3. **Run capture**: `sudo python py3row_usb_video_capture.py` (or `--fps 60` for higher detail)
-sudo /Users/kelsorj/miniconda/bin/python py3row_usb_video_capture.py
+3. **Run capture**:  `sudo python py3row_usb_video_capture.py` (or `--fps 60` for higher detail)
+                     `sudo /Users/kelsorj/miniconda/bin/python py3row_usb_video_capture.py --fps 60`
 
 4. **Row for 2-5 minutes** then stop capture
 5. **Run comprehensive analysis**: `python comprehensive_stroke_analysis.py analysis_py3rowcap_YYYYMMDD_HHMMSS`
