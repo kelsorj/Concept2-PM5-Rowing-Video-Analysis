@@ -472,6 +472,14 @@ def load_and_combine_force_data(raw_csv_path):
     
     print(f"   Loaded {len(all_data)} total data points")
     
+    # Debug: Check what strokestates we have
+    strokestates = set(d['strokestate'] for d in all_data if d['strokestate'])
+    print(f"   Found strokestates: {sorted(strokestates)}")
+    
+    # Debug: Check if forceplot data exists
+    with_forceplot = sum(1 for d in all_data if d['forceplot'])
+    print(f"   Data points with forceplot: {with_forceplot}/{len(all_data)}")
+    
     # Combine Drive + Dwelling measurements into complete strokes
     combined_strokes = []
     current_stroke = None
@@ -868,6 +876,11 @@ def generate_comprehensive_report(pose_data, combined_strokes, frame_timestamps,
         f.write(f"Total Strokes: {len(combined_strokes)}\n")
         f.write(f"Analysis Duration: {frame_timestamps[-1]['timestamp_dt'] - frame_timestamps[0]['timestamp_dt']}\n\n")
         
+        if not combined_strokes:
+            f.write("⚠️  NO STROKE DATA AVAILABLE\n")
+            f.write("This analysis contains kinematics data only.\n")
+            f.write("No PM5 stroke/force data was detected in the session.\n\n")
+        
         # Helper utilities for metrics
         def find_nearest_frame_idx(target_dt):
             nearest_idx = 0
@@ -962,66 +975,67 @@ def generate_comprehensive_report(pose_data, combined_strokes, frame_timestamps,
             return None, None, None
 
         # Stroke summary
-        f.write("STROKE SUMMARY\n")
-        f.write("-" * 20 + "\n")
-        for i, stroke in enumerate(combined_strokes):
-            f.write(f"Stroke {i+1}:\n")
-            f.write(f"  Duration: {stroke['stroke_duration']:.2f}s\n")
-            f.write(f"  Peak Force: {max(stroke['combined_forceplot'])}\n")
-            f.write(f"  Average Power: {stroke['final_power']}W\n")
-            f.write(f"  Stroke Rate: {stroke['final_spm']} spm\n")
-            f.write(f"  Time: {stroke['start_timestamp_dt'].strftime('%H:%M:%S.%f')[:-3]} - {stroke['end_timestamp_dt'].strftime('%H:%M:%S.%f')[:-3]}\n")
-            f.write(f"  Phases: {' -> '.join(stroke['stroke_phases'])}\n\n")
+        if combined_strokes:
+            f.write("STROKE SUMMARY\n")
+            f.write("-" * 20 + "\n")
+            for i, stroke in enumerate(combined_strokes):
+                f.write(f"Stroke {i+1}:\n")
+                f.write(f"  Duration: {stroke['stroke_duration']:.2f}s\n")
+                f.write(f"  Peak Force: {max(stroke['combined_forceplot'])}\n")
+                f.write(f"  Average Power: {stroke['final_power']}W\n")
+                f.write(f"  Stroke Rate: {stroke['final_spm']} spm\n")
+                f.write(f"  Time: {stroke['start_timestamp_dt'].strftime('%H:%M:%S.%f')[:-3]} - {stroke['end_timestamp_dt'].strftime('%H:%M:%S.%f')[:-3]}\n")
+                f.write(f"  Phases: {' -> '.join(stroke['stroke_phases'])}\n\n")
 
-        # Coaching metrics per stroke (Finish, Catch, Sequence)
-        f.write("COACHING METRICS (per stroke)\n")
-        f.write("-" * 30 + "\n")
-        for i, stroke in enumerate(combined_strokes):
-            f.write(f"Stroke {i+1}:\n")
-            # Catch/Finish timestamps
-            first_drive = None
-            last_drive = None
-            for m in stroke.get('measurements', []):
-                if m.get('strokestate') == 'Drive' and first_drive is None:
-                    first_drive = m.get('timestamp_dt')
-                if m.get('strokestate') in ['Drive','Dwelling']:
-                    last_drive = m.get('timestamp_dt')
-            catch_dt = first_drive or stroke['start_timestamp_dt']
-            finish_dt = last_drive or stroke['end_timestamp_dt']
+            # Coaching metrics per stroke (Finish, Catch, Sequence)
+            f.write("COACHING METRICS (per stroke)\n")
+            f.write("-" * 30 + "\n")
+            for i, stroke in enumerate(combined_strokes):
+                f.write(f"Stroke {i+1}:\n")
+                # Catch/Finish timestamps
+                first_drive = None
+                last_drive = None
+                for m in stroke.get('measurements', []):
+                    if m.get('strokestate') == 'Drive' and first_drive is None:
+                        first_drive = m.get('timestamp_dt')
+                    if m.get('strokestate') in ['Drive','Dwelling']:
+                        last_drive = m.get('timestamp_dt')
+                catch_dt = first_drive or stroke['start_timestamp_dt']
+                finish_dt = last_drive or stroke['end_timestamp_dt']
 
-            catch_idx = find_nearest_frame_idx(catch_dt)
-            finish_idx = find_nearest_frame_idx(finish_dt)
-            catch_pose = pose_data[catch_idx] if catch_idx < len(pose_data) else {}
-            finish_pose = pose_data[finish_idx] if finish_idx < len(pose_data) else {}
+                catch_idx = find_nearest_frame_idx(catch_dt)
+                finish_idx = find_nearest_frame_idx(finish_dt)
+                catch_pose = pose_data[catch_idx] if catch_idx < len(pose_data) else {}
+                finish_pose = pose_data[finish_idx] if finish_idx < len(pose_data) else {}
 
-            # Finish metrics
-            layback = finish_pose.get('back_vertical_angle')
-            legs_unbent = get_mean([finish_pose.get('left_leg_angle'), finish_pose.get('right_leg_angle')])
-            handle_pct = handle_height_percent(finish_pose)
+                # Finish metrics
+                layback = finish_pose.get('back_vertical_angle')
+                legs_unbent = get_mean([finish_pose.get('left_leg_angle'), finish_pose.get('right_leg_angle')])
+                handle_pct = handle_height_percent(finish_pose)
 
-            # Catch metrics
-            shins_angle = get_mean([catch_pose.get('left_ankle_vertical_angle'), catch_pose.get('right_ankle_vertical_angle')])
-            fwd_body = catch_pose.get('back_vertical_angle')
-            elbows_unbent = get_mean([catch_pose.get('left_arm_angle'), catch_pose.get('right_arm_angle')])
+                # Catch metrics
+                shins_angle = get_mean([catch_pose.get('left_ankle_vertical_angle'), catch_pose.get('right_ankle_vertical_angle')])
+                fwd_body = catch_pose.get('back_vertical_angle')
+                elbows_unbent = get_mean([catch_pose.get('left_arm_angle'), catch_pose.get('right_arm_angle')])
 
-            # Sequence metrics
-            sep_lb, sep_ba, drive_ratio = compute_sequence_metrics(stroke)
+                # Sequence metrics
+                sep_lb, sep_ba, drive_ratio = compute_sequence_metrics(stroke)
 
-            def fmt(v, suffix=''):
-                return f"{v:.0f}{suffix}" if isinstance(v, (int,float)) and v is not None else "N/A"
+                def fmt(v, suffix=''):
+                    return f"{v:.0f}{suffix}" if isinstance(v, (int,float)) and v is not None else "N/A"
 
-            f.write(f"  Finish:\n")
-            f.write(f"    Layback body angle: {fmt(layback, '°')}\n")
-            f.write(f"    Legs unbent: {fmt(legs_unbent, '°')}\n")
-            f.write(f"    Handle height at torso: {fmt(handle_pct, '%')}\n")
-            f.write(f"  Catch:\n")
-            f.write(f"    Shins angle: {fmt(shins_angle, '°')}\n")
-            f.write(f"    Forward body angle: {fmt(fwd_body, '°')}\n")
-            f.write(f"    Elbows unbent: {fmt(elbows_unbent, '°')}\n")
-            f.write(f"  Sequence:\n")
-            f.write(f"    Drive Legs&Back separation: {fmt(sep_lb, '%')}\n")
-            f.write(f"    Drive Back&Arms separation: {fmt(sep_ba, '%')}\n")
-            f.write(f"    Drive duration ratio: {fmt(drive_ratio, '%')}\n\n")
+                f.write(f"  Finish:\n")
+                f.write(f"    Layback body angle: {fmt(layback, '°')}\n")
+                f.write(f"    Legs unbent: {fmt(legs_unbent, '°')}\n")
+                f.write(f"    Handle height at torso: {fmt(handle_pct, '%')}\n")
+                f.write(f"  Catch:\n")
+                f.write(f"    Shins angle: {fmt(shins_angle, '°')}\n")
+                f.write(f"    Forward body angle: {fmt(fwd_body, '°')}\n")
+                f.write(f"    Elbows unbent: {fmt(elbows_unbent, '°')}\n")
+                f.write(f"  Sequence:\n")
+                f.write(f"    Drive Legs&Back separation: {fmt(sep_lb, '%')}\n")
+                f.write(f"    Drive Back&Arms separation: {fmt(sep_ba, '%')}\n")
+                f.write(f"    Drive duration ratio: {fmt(drive_ratio, '%')}\n\n")
         
         # Body angle statistics
         f.write("BODY ANGLE STATISTICS\n")
@@ -1043,39 +1057,40 @@ def generate_comprehensive_report(pose_data, combined_strokes, frame_timestamps,
                 f.write(f"  Range: {np.max(values) - np.min(values):.1f}\n\n")
         
         # Force-angle correlations
-        f.write("FORCE-ANGLE CORRELATIONS\n")
-        f.write("-" * 25 + "\n")
-        
-        # For each stroke, find the corresponding pose data and analyze correlations
-        for i, stroke in enumerate(combined_strokes):
-            f.write(f"Stroke {i+1} Analysis:\n")
+        if combined_strokes:
+            f.write("FORCE-ANGLE CORRELATIONS\n")
+            f.write("-" * 25 + "\n")
             
-            # Find pose frames during this stroke
-            stroke_start = stroke['start_timestamp_dt']
-            stroke_end = stroke['end_timestamp_dt']
-            
-            stroke_frames = []
-            for j, frame_ts in enumerate(frame_timestamps):
-                if stroke_start <= frame_ts['timestamp_dt'] <= stroke_end and j < len(pose_data):
-                    stroke_frames.append((j, pose_data[j]))
-            
-            if stroke_frames:
-                f.write(f"  Frames during stroke: {len(stroke_frames)}\n")
+            # For each stroke, find the corresponding pose data and analyze correlations
+            for i, stroke in enumerate(combined_strokes):
+                f.write(f"Stroke {i+1} Analysis:\n")
                 
-                # Calculate average angles during stroke
-                for angle in angles:
-                    values = [frame.get(angle) for _, frame in stroke_frames if frame.get(angle) is not None]
-                    if values:
-                        f.write(f"  {angle.replace('_', ' ').title()}: {np.mean(values):.1f} (avg)\n")
+                # Find pose frames during this stroke
+                stroke_start = stroke['start_timestamp_dt']
+                stroke_end = stroke['end_timestamp_dt']
                 
-                # Force curve analysis
-                force_curve = stroke['combined_forceplot']
-                if force_curve:
-                    f.write(f"  Force Curve Points: {len(force_curve)}\n")
-                    f.write(f"  Peak Force: {max(force_curve)}\n")
-                    f.write(f"  Average Force: {np.mean(force_curve):.1f}\n")
-                    f.write(f"  Force Range: {max(force_curve) - min(force_curve)}\n")
-            f.write("\n")
+                stroke_frames = []
+                for j, frame_ts in enumerate(frame_timestamps):
+                    if stroke_start <= frame_ts['timestamp_dt'] <= stroke_end and j < len(pose_data):
+                        stroke_frames.append((j, pose_data[j]))
+                
+                if stroke_frames:
+                    f.write(f"  Frames during stroke: {len(stroke_frames)}\n")
+                    
+                    # Calculate average angles during stroke
+                    for angle in angles:
+                        values = [frame.get(angle) for _, frame in stroke_frames if frame.get(angle) is not None]
+                        if values:
+                            f.write(f"  {angle.replace('_', ' ').title()}: {np.mean(values):.1f} (avg)\n")
+                    
+                    # Force curve analysis
+                    force_curve = stroke['combined_forceplot']
+                    if force_curve:
+                        f.write(f"  Force Curve Points: {len(force_curve)}\n")
+                        f.write(f"  Peak Force: {max(force_curve)}\n")
+                        f.write(f"  Average Force: {np.mean(force_curve):.1f}\n")
+                        f.write(f"  Force Range: {max(force_curve) - min(force_curve)}\n")
+                f.write("\n")
     
     # Create detailed CSV data
     with open(csv_path, 'w', newline='') as f:
@@ -1203,9 +1218,13 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
         pose_data = json.load(f)
     print(f"📊 Loaded {len(pose_data)} pose frames from kinematics analysis")
     
-    if not frame_timestamps or not combined_strokes or not pose_data:
-        print("❌ Missing required data. Cannot create overlay video.")
+    if not frame_timestamps or not pose_data:
+        print("❌ Missing required data (frame timestamps or pose data). Cannot create overlay video.")
         return
+    
+    if not combined_strokes:
+        print("⚠️  No stroke data found - will create overlay with kinematics only (no force curves)")
+        combined_strokes = []
     
     # Step 3: Create overlay video with real-time smoothing
     print("\n🎬 Step 3: Creating Overlay Video with Real-time Smoothing")
