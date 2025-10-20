@@ -362,7 +362,7 @@ def run_kinematics_analysis(video_path, output_dir="kinematics_analysis"):
         # Run pose detection
         results = model(frame, verbose=False)
         
-        if results and len(results) > 0 and results[0].keypoints is not None:
+        if results and len(results) > 0 and results[0].keypoints is not None and len(results[0].keypoints.data) > 0:
             # Get keypoints for the first person detected
             raw_keypoints = results[0].keypoints.data[0].cpu().numpy()
             
@@ -1256,7 +1256,7 @@ def create_complete_kinematics_overlay(video_path, frames_csv_path, raw_csv_path
         
         # Run real-time pose detection and smoothing for overlay
         results = model(frame, verbose=False)
-        if results and len(results) > 0 and results[0].keypoints is not None:
+        if results and len(results) > 0 and results[0].keypoints is not None and len(results[0].keypoints.data) > 0:
             # Get keypoints for the first person detected
             raw_keypoints = results[0].keypoints.data[0].cpu().numpy()
             

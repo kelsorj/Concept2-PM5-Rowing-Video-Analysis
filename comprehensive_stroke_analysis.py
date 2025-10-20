@@ -494,7 +494,8 @@ class ComprehensiveStrokeAnalysis:
         # Create time axis based on actual timestamps
         if 'timestamp' in df.columns:
             # Convert timestamps to relative time within stroke (0 to 1)
-            timestamps = pd.to_datetime(df['timestamp'])
+            # Use format='ISO8601' to handle timestamps with or without fractional seconds
+            timestamps = pd.to_datetime(df['timestamp'], format='ISO8601')
             if stroke_start_time and stroke_end_time:
                 stroke_duration = (stroke_end_time - stroke_start_time).total_seconds()
                 time_axis = [(ts - stroke_start_time).total_seconds() / stroke_duration for ts in timestamps]
